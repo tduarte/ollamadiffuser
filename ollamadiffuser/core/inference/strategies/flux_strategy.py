@@ -51,11 +51,11 @@ class FluxStrategy(InferenceStrategy):
                 model_config.path, **load_kwargs
             )
 
-            if device in ("cuda", "mps") and hasattr(self.pipeline, "enable_model_cpu_offload"):
-                # CPU offloading manages device placement itself — don't call _move_to_device
+            if device == "cuda" and hasattr(self.pipeline, "enable_model_cpu_offload"):
                 self.pipeline.enable_model_cpu_offload(device=device)
                 logger.info(f"Enabled CPU offloading for FLUX on {device}")
             else:
+                # MPS: unified memory means CPU offload adds overhead without saving memory
                 self._move_to_device(device)
             self._apply_memory_optimizations()
 

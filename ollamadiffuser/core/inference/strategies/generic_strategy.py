@@ -72,20 +72,8 @@ class GenericPipelineStrategy(InferenceStrategy):
 
             # Device placement
             enable_offload = params.get("enable_cpu_offload", False)
-            # Auto-enable CPU offload on MPS to avoid OOM on unified memory
-            if device == "mps":
-                enable_offload = True
-
-            if enable_offload and device in ("cuda", "mps"):
-                if device == "mps" and hasattr(self.pipeline, "enable_model_cpu_offload"):
-                    # MPS/unified memory: model-level offload is more effective than
-                    # sequential offload because it fully deallocates entire components
-                    # (T5 encoder, transformer, VAE) between stages, reducing peak
-                    # memory pressure on the MPS allocator.
-                    self.pipeline.enable_model_cpu_offload(device=device)
-                    logger.info(f"Enabled model CPU offloading on {device}")
-                elif hasattr(self.pipeline, "enable_sequential_cpu_offload"):
-                    # CUDA: sequential offload moves individual layers, lowest VRAM usage
+            if enable_offload and device == "cuda":
+                if hasattr(self.pipeline, "enable_sequential_cpu_offload"):
                     self.pipeline.enable_sequential_cpu_offload(device=device)
                     logger.info(f"Enabled sequential CPU offloading on {device}")
                 elif hasattr(self.pipeline, "enable_model_cpu_offload"):
@@ -94,6 +82,7 @@ class GenericPipelineStrategy(InferenceStrategy):
                 else:
                     self._move_to_device(device)
             else:
+                # MPS: unified memory means CPU offload adds overhead without saving memory
                 self._move_to_device(device)
 
             self._apply_memory_optimizations()

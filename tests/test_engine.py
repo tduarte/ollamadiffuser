@@ -242,9 +242,9 @@ class TestGenericStrategy:
     def test_generic_strategy_cpu_offload_mps(self):
         result, mock_pipe = self._load_generic_with_offload("mps")
         assert result is True
-        # MPS prefers model-level offload (more effective on unified memory)
-        mock_pipe.enable_model_cpu_offload.assert_called_once()
-        mock_pipe.to.assert_not_called()
+        # MPS: unified memory means CPU offload adds overhead, so load directly to device
+        mock_pipe.enable_model_cpu_offload.assert_not_called()
+        mock_pipe.to.assert_called_once()
 
 
 class TestInferenceStrategyBase:
