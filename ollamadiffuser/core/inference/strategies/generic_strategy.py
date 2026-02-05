@@ -64,6 +64,8 @@ class GenericPipelineStrategy(InferenceStrategy):
             load_kwargs = {"torch_dtype": dtype, "low_cpu_mem_usage": True}
             if dtype in (torch.float16, torch.bfloat16):
                 load_kwargs["use_safetensors"] = True
+            if model_config.variant:
+                load_kwargs["variant"] = model_config.variant
 
             logger.info(f"Loading {pipeline_class_name} from {model_config.path} (dtype={dtype})")
             self.pipeline = pipeline_cls.from_pretrained(
