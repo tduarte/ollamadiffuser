@@ -44,8 +44,8 @@ REQUIRED = [
 setup(
     name="ollamadiffuser",
     version=get_version(),
-    author="OllamaDiffuser Team",
-    author_email="ollamadiffuser@gmail.com",
+    author="LocalKinAI Team",
+    author_email="contact@localkin.ai",
     description="🎨 Ollama-like image generation model management tool with LoRA support",
     long_description=long_description,
     long_description_content_type="text/markdown",
