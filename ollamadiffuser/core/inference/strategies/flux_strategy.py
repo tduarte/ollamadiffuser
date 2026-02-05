@@ -38,6 +38,11 @@ class FluxStrategy(InferenceStrategy):
             if device == "cpu":
                 load_kwargs["torch_dtype"] = torch.float32
                 logger.warning("FLUX on CPU will be very slow for this 12B parameter model")
+            elif device == "mps":
+                # MPS has limited bfloat16 support; float16 avoids VAE decode crashes
+                load_kwargs["torch_dtype"] = torch.float16
+                load_kwargs["use_safetensors"] = True
+                load_kwargs["low_cpu_mem_usage"] = True
             else:
                 load_kwargs["torch_dtype"] = torch.bfloat16
                 load_kwargs["use_safetensors"] = True
@@ -102,7 +107,9 @@ class FluxStrategy(InferenceStrategy):
 
         max_seq_len = kwargs.get("max_sequence_length", params.get("max_sequence_length", 512))
 
-        generator, used_seed = self._make_generator(seed, self.device)
+        # CPU offload moves tensors between CPU/device; use CPU generator to avoid device mismatches
+        gen_device = "cpu" if self.device == "mps" else self.device
+        generator, used_seed = self._make_generator(seed, gen_device)
 
         gen_kwargs = {
             "prompt": prompt,

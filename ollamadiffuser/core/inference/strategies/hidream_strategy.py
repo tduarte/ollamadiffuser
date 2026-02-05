@@ -34,6 +34,9 @@ class HiDreamStrategy(InferenceStrategy):
             load_kwargs = {**SAFETY_DISABLED_KWARGS}
             if device == "cpu":
                 load_kwargs["torch_dtype"] = torch.float32
+            elif device == "mps":
+                load_kwargs["torch_dtype"] = torch.float16
+                load_kwargs["low_cpu_mem_usage"] = True
             else:
                 load_kwargs["torch_dtype"] = torch.bfloat16
 
@@ -77,7 +80,8 @@ class HiDreamStrategy(InferenceStrategy):
         guidance = guidance_scale if guidance_scale is not None else params.get("guidance_scale", 5.0)
         max_seq_len = kwargs.get("max_sequence_length", params.get("max_sequence_length", 128))
 
-        generator, used_seed = self._make_generator(seed, self.device)
+        gen_device = "cpu" if self.device == "mps" else self.device
+        generator, used_seed = self._make_generator(seed, gen_device)
 
         gen_kwargs = {
             "prompt": prompt,
