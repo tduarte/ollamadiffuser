@@ -1,12 +1,8 @@
-### ⚠️ Project Status: Maintenance Mode
+### Project Status: Active Development
 
-**Thank you for the incredible support and over 5,000 downloads!**
+**Thank you for the incredible support and over 11,000 downloads!**
 
-Please be aware that `ollamadiffuser` is currently in **maintenance mode**. Due to the creator's other professional commitments, active feature development has been paused.
-
-The project in its current state is stable and will remain available for use. However, new features will not be added, and non-critical issues may not be addressed in the near future.
-
-This project laid the foundation for a more ambitious vision: **[LocalKinAI](https://github.com/LocalKinAI)**. Thank you for being part of the journey.
+`ollamadiffuser` is back in **active development**. v2.0 brings a major architecture overhaul, 21 new models, MCP/OpenClaw integration, and Apple Silicon support. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
 
 # OllamaDiffuser 🎨
 
