@@ -68,9 +68,19 @@ class GenericPipelineStrategy(InferenceStrategy):
                 load_kwargs["variant"] = model_config.variant
 
             logger.info(f"Loading {pipeline_class_name} from {model_config.path} (dtype={dtype})")
-            self.pipeline = pipeline_cls.from_pretrained(
-                model_config.path, **load_kwargs
-            )
+            try:
+                self.pipeline = pipeline_cls.from_pretrained(
+                    model_config.path, **load_kwargs
+                )
+            except (OSError, ValueError):
+                if "variant" in load_kwargs:
+                    logger.info(f"No {model_config.variant} variant files found, loading without variant")
+                    load_kwargs.pop("variant")
+                    self.pipeline = pipeline_cls.from_pretrained(
+                        model_config.path, **load_kwargs
+                    )
+                else:
+                    raise
 
             # Device placement
             enable_offload = params.get("enable_cpu_offload", False)
