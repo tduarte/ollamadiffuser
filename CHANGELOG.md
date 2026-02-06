@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.7] - 2026-02-05
+
+### 🍎 MPS Dtype Overhaul
+- **Per-model dtype on MPS**: Generic strategy now respects each model's configured `torch_dtype` instead of blanket-overriding to float16
+- **MPS default float32**: When a model doesn't specify dtype, default to float32 on MPS for numerical stability
+- **Runtime bfloat16 check**: Detects MPS bfloat16 support (PyTorch 2.3+) and only falls back to float16 if unsupported
+- **VAE upcast on MPS**: Automatically upcasts VAE to float32 when using float16 on MPS to prevent NaN in decode
+- **NaN/Inf sanitization**: Clamps invalid pixels in generated images to avoid `invalid value encountered in cast` errors
+
+### 🐛 Bug Fixes
+- **CogView4 variant removed**: Removed `variant: "fp16"` from CogView4 registry entry (repo doesn't publish fp16 variant files)
+- **Removed forced `use_safetensors`**: No longer forces `use_safetensors=True` for float16/bfloat16 models, letting diffusers auto-detect
+
+### 🧪 Tests
+- **VAE upcast test**: Verifies VAE is upcast to float32 when loading float16 models on MPS
+- **NaN sanitization test**: Verifies NaN/Inf pixels are clamped to valid range
+- **Updated dtype tests**: MPS default is now float32; bfloat16 is respected when specified
+
+## [2.0.6] - 2026-02-04
+
+### 🐛 Bug Fixes
+- **Variant fallback**: Catch `ValueError` in addition to `OSError` when variant files are missing, retry without variant
+
+## [2.0.5] - 2026-02-04
+
+### 🐛 Bug Fixes
+- **Variant passthrough**: Pass `variant` parameter from model config to `from_pretrained` in generic strategy for models with fp16 variant files
+
+## [2.0.4] - 2026-02-04
+
+### 🐛 Bug Fixes
+- **FLUX/HiDream MPS dtype**: Use `bfloat16` on MPS for FLUX and HiDream strategies, matching v1.x behavior that worked on Apple Silicon
+
+## [2.0.3] - 2026-02-04
+
+### 🐛 Bug Fixes
+- **MPS CPU offload removed**: Disabled `enable_model_cpu_offload` on MPS -- Apple Silicon unified memory means offloading adds overhead (slowness + disk swap) without saving memory
+
+## [2.0.2] - 2026-02-04
+
+### 🐛 Bug Fixes
+- **MPS bfloat16 crash**: Fixed bfloat16 crashes in FLUX and HiDream strategies on MPS devices
+
+## [2.0.1] - 2026-02-04
+
+### 🐛 Bug Fixes
+- **peft dependency**: Fixed missing `peft` dependency for LoRA support
+- **Project status**: Updated project status and metadata
+
 ## [2.0.0] - 2026-02-04
 
 ### 🏗️ Architecture Overhaul

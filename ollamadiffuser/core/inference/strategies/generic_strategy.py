@@ -3,6 +3,7 @@
 import logging
 from typing import Optional
 
+import numpy as np
 import torch
 from PIL import Image
 
@@ -10,6 +11,17 @@ from ..base import InferenceStrategy
 from ...config.settings import ModelConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _mps_supports_bfloat16() -> bool:
+    """Check if MPS backend supports bfloat16 (requires PyTorch 2.3+)."""
+    try:
+        t = torch.tensor([1.0], dtype=torch.bfloat16, device="mps")
+        _ = t + t
+        return True
+    except (RuntimeError, TypeError):
+        return False
+
 
 # Dtype name -> torch dtype mapping
 _DTYPE_MAP = {
@@ -53,17 +65,19 @@ class GenericPipelineStrategy(InferenceStrategy):
                 dtype = _DTYPE_MAP[dtype_name]
             elif device == "cpu":
                 dtype = torch.float32
+            elif device == "mps":
+                # MPS default: float32 for numerical stability when model doesn't specify
+                dtype = torch.float32
             else:
                 dtype = torch.bfloat16
 
-            # MPS safety: bfloat16 is not reliably supported on Metal
+            # MPS bfloat16 support check: fall back to float16 if unsupported
             if device == "mps" and dtype == torch.bfloat16:
-                logger.info("Falling back from bfloat16 to float16 for MPS device compatibility")
-                dtype = torch.float16
+                if not _mps_supports_bfloat16():
+                    logger.info("MPS does not support bfloat16, falling back to float16")
+                    dtype = torch.float16
 
             load_kwargs = {"torch_dtype": dtype, "low_cpu_mem_usage": True}
-            if dtype in (torch.float16, torch.bfloat16):
-                load_kwargs["use_safetensors"] = True
             if model_config.variant:
                 load_kwargs["variant"] = model_config.variant
 
@@ -81,6 +95,12 @@ class GenericPipelineStrategy(InferenceStrategy):
                     )
                 else:
                     raise
+
+            # MPS + float16: upcast VAE to float32 to prevent NaN in decode
+            if device == "mps" and dtype == torch.float16:
+                if hasattr(self.pipeline, "vae") and self.pipeline.vae is not None:
+                    self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
+                    logger.info("Upcast VAE to float32 on MPS for numerical stability")
 
             # Device placement
             enable_offload = params.get("enable_cpu_offload", False)
@@ -151,7 +171,8 @@ class GenericPipelineStrategy(InferenceStrategy):
                 f"steps={steps}, guidance={guidance}, seed={used_seed}"
             )
             output = self.pipeline(**gen_kwargs)
-            return output.images[0]
+            image = output.images[0]
+            return self._sanitize_image(image)
         except TypeError as e:
             # Some pipelines don't accept all standard params (e.g., width/height)
             # Retry without optional params
@@ -159,7 +180,19 @@ class GenericPipelineStrategy(InferenceStrategy):
             for key in ("width", "height", "negative_prompt"):
                 gen_kwargs.pop(key, None)
             output = self.pipeline(**gen_kwargs)
-            return output.images[0]
+            image = output.images[0]
+            return self._sanitize_image(image)
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             return self._create_error_image(str(e), prompt)
+
+    @staticmethod
+    def _sanitize_image(image: Image.Image) -> Image.Image:
+        """Clamp NaN/Inf pixels to avoid 'invalid value encountered in cast' on MPS."""
+        arr = np.array(image, dtype=np.float32)
+        if np.isnan(arr).any() or np.isinf(arr).any():
+            logger.warning("NaN/Inf detected in generated image — clamping to valid range")
+            arr = np.nan_to_num(arr, nan=0.0, posinf=255.0, neginf=0.0)
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+            return Image.fromarray(arr)
+        return image

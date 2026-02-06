@@ -918,7 +918,6 @@ class ModelRegistry:
             "cogview4": {
                 "repo_id": "THUDM/CogView4-6B",
                 "model_type": "generic",
-                "variant": "fp16",
                 "parameters": {
                     "pipeline_class": "CogView4Pipeline",
                     "num_inference_steps": 50,

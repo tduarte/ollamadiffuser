@@ -4,6 +4,7 @@ import sys
 import pytest
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
+from PIL import Image
 
 from ollamadiffuser.core.config.settings import ModelConfig
 from ollamadiffuser.core.config.model_registry import ModelRegistry
@@ -53,19 +54,19 @@ class TestGenericStrategyMPSDtype:
         call_kwargs = mock_pipeline_cls.from_pretrained.call_args
         return call_kwargs[1].get("torch_dtype") if call_kwargs else None
 
-    def test_mps_no_dtype_param_uses_float16(self):
+    def test_mps_no_dtype_param_uses_float32(self):
         import torch
 
         dtype = self._load_generic_on_device("mps", torch_dtype=None)
-        assert dtype == torch.float16
+        assert dtype == torch.float32
 
-    def test_mps_bfloat16_param_falls_back_to_float16(self):
+    def test_mps_bfloat16_param_respected(self):
         import torch
 
         dtype = self._load_generic_on_device("mps", torch_dtype="bfloat16")
-        assert dtype == torch.float16
+        assert dtype == torch.bfloat16
 
-    def test_mps_float16_param_stays_float16(self):
+    def test_mps_float16_param_respected(self):
         import torch
 
         dtype = self._load_generic_on_device("mps", torch_dtype="float16")
@@ -88,6 +89,81 @@ class TestGenericStrategyMPSDtype:
 
         dtype = self._load_generic_on_device("cpu", torch_dtype=None)
         assert dtype == torch.float32
+
+
+class TestGenericStrategyMPSVAEUpcast:
+    """Verify VAE is upcast to float32 when running float16 on MPS."""
+
+    def test_vae_upcast_on_mps_float16(self):
+        import torch
+        from ollamadiffuser.core.inference.strategies.generic_strategy import (
+            GenericPipelineStrategy,
+        )
+
+        mock_pipeline_cls = MagicMock()
+        mock_pipe = MagicMock()
+        mock_pipe.to.return_value = mock_pipe
+        mock_pipe.enable_attention_slicing = MagicMock()
+        mock_vae = MagicMock()
+        mock_vae.to.return_value = mock_vae
+        mock_pipe.vae = mock_vae
+        mock_pipeline_cls.from_pretrained.return_value = mock_pipe
+
+        mock_diffusers = MagicMock()
+        mock_diffusers.TestPipeline = mock_pipeline_cls
+
+        config = ModelConfig(
+            name="test-kolors",
+            path="org/test-kolors",
+            model_type="generic",
+            parameters={
+                "pipeline_class": "TestPipeline",
+                "torch_dtype": "float16",
+            },
+        )
+
+        strategy = GenericPipelineStrategy()
+        original = sys.modules.get("diffusers")
+        sys.modules["diffusers"] = mock_diffusers
+        try:
+            strategy.load(config, "mps")
+        finally:
+            if original is not None:
+                sys.modules["diffusers"] = original
+            else:
+                sys.modules.pop("diffusers", None)
+
+        mock_vae.to.assert_any_call(dtype=torch.float32)
+
+
+class TestSanitizeImage:
+    """Verify NaN/Inf sanitization in generated images."""
+
+    def test_nan_pixels_clamped(self):
+        import numpy as np
+        from ollamadiffuser.core.inference.strategies.generic_strategy import (
+            GenericPipelineStrategy,
+        )
+
+        arr = np.array([[[255, 0, 0], [float("nan"), 128, 0]]], dtype=np.float32)
+        img = Image.fromarray(arr.astype(np.uint8))
+        # Recreate with NaN by going through float array
+        bad_arr = np.array(img, dtype=np.float32)
+        bad_arr[0, 1, 0] = float("nan")
+        bad_img = Image.fromarray(bad_arr.astype(np.uint8))
+
+        # The static method should not crash
+        result = GenericPipelineStrategy._sanitize_image(bad_img)
+        assert isinstance(result, Image.Image)
+
+    def test_clean_image_passes_through(self):
+        from ollamadiffuser.core.inference.strategies.generic_strategy import (
+            GenericPipelineStrategy,
+        )
+
+        img = Image.new("RGB", (4, 4), color=(128, 64, 32))
+        result = GenericPipelineStrategy._sanitize_image(img)
+        assert result is img  # same object, not a copy
 
 
 class TestRegistryMPSDevices:
