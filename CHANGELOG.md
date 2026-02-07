@@ -8,9 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.8] - 2026-02-06
 
 ### 🍎 MPS Float16 for SD15, SDXL, ControlNet
-- **SDXL float16 on MPS**: Changed from float32 to float16, fixing OOM on 16GB Macs (~7GB instead of ~13GB). VAE upcast to float32 for numerical stability.
-- **SD 1.5 float16 on MPS**: Changed from float32 to float16 for consistency and lower memory usage (~1.7GB instead of ~3.4GB). VAE upcast to float32.
-- **ControlNet float16 on MPS**: Changed from float32 to float16, matching SD 1.5/SDXL. VAE upcast to float32.
+- **SDXL float16 on MPS**: Changed from float32 to float16, fixing OOM on 16GB Macs (~7GB instead of ~13GB). No manual VAE upcast — diffusers' built-in `force_upcast`/`upcast_vae()` handles VAE dtype correctly (manual upcast bypassed latent casting → black images).
+- **SDXL: removed UNet upcast on MPS**: Upcasting UNet to float32 while text encoders stayed in float16 caused `MPSNDArrayMatrixMultiplication` assertion failure (dtype mismatch in cross-attention).
+- **SDXL: force float16 on MPS**: Removed bfloat16 path for SDXL (bfloat16 is only for FLUX/HiDream).
+- **SD 1.5 float16 on MPS**: Changed from float32 to float16 for consistency and lower memory usage (~1.7GB instead of ~3.4GB). VAE upcast to float32 (SD 1.5 pipeline has no `force_upcast`).
+- **ControlNet float16 on MPS**: Changed from float32 to float16. SD15-based: VAE upcast to float32. SDXL-based: no manual upcast (diffusers handles it).
+- **Generic strategy**: Skip manual VAE upcast for pipelines with `upcast_vae` method (SDXL-family); only manually upcast for pipelines without built-in handling.
 - **Variant passthrough on MPS**: SDXL, SD 1.5, and ControlNet now pass `variant="fp16"` on MPS when the model has fp16 variant files (previously only passed on CUDA).
 
 ### 📋 Registry Hardware Requirements

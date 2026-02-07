@@ -97,10 +97,12 @@ class GenericPipelineStrategy(InferenceStrategy):
                     raise
 
             # MPS + float16: upcast VAE to float32 to prevent NaN in decode
+            # Skip if pipeline has built-in upcast_vae (e.g. SDXL) — manual upcast interferes
             if device == "mps" and dtype == torch.float16:
                 if hasattr(self.pipeline, "vae") and self.pipeline.vae is not None:
-                    self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
-                    logger.info("Upcast VAE to float32 on MPS for numerical stability")
+                    if not hasattr(self.pipeline, "upcast_vae"):
+                        self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
+                        logger.info("Upcast VAE to float32 on MPS for numerical stability")
 
             # Device placement
             enable_offload = params.get("enable_cpu_offload", False)

@@ -519,10 +519,10 @@ Each model type has a dedicated strategy class handling loading and generation:
 ```
 InferenceEngine (facade)
   -> SD15Strategy            (512x512, float16 on MPS + VAE upcast, img2img, inpainting)
-  -> SDXLStrategy            (1024x1024, float16 on MPS + VAE upcast, img2img, inpainting, scheduler overrides)
+  -> SDXLStrategy            (1024x1024, float16 on MPS, diffusers force_upcast, img2img, inpainting, scheduler overrides)
   -> FluxStrategy            (schnell/dev/Fill/Canny/Depth, bfloat16 on MPS, dynamic pipeline class)
   -> SD3Strategy             (1024x1024, float16 on MPS, 28 steps, guidance=3.5)
-  -> ControlNetStrategy      (SD15 + SDXL base models, float16 on MPS + VAE upcast)
+  -> ControlNetStrategy      (SD15: VAE upcast, SDXL: diffusers force_upcast, float16 on MPS)
   -> VideoStrategy           (AnimateDiff, float16 on MPS, 16 frames)
   -> HiDreamStrategy         (bfloat16 on MPS, multi-prompt)
   -> GGUFStrategy            (quantized via stable-diffusion-cpp)

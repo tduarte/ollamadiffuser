@@ -36,10 +36,7 @@ class SDXLStrategy(InferenceStrategy):
             if device == "cpu":
                 load_kwargs["torch_dtype"] = torch.float32
             elif device == "mps":
-                if _mps_supports_bfloat16():
-                    load_kwargs["torch_dtype"] = torch.bfloat16
-                else:
-                    load_kwargs["torch_dtype"] = torch.float16
+                load_kwargs["torch_dtype"] = torch.float16
                 if model_config.variant == "fp16":
                     load_kwargs["variant"] = "fp16"
             else:  # CUDA
@@ -70,16 +67,6 @@ class SDXLStrategy(InferenceStrategy):
 
             self._move_to_device(device)
             self._apply_memory_optimizations()
-
-            # MPS: upcast UNet and VAE to float32 for numerical stability
-            # Half-precision attention on MPS can overflow → NaN in latent space
-            if device == "mps":
-                if hasattr(self.pipeline, "unet"):
-                    self.pipeline.unet = self.pipeline.unet.to(dtype=torch.float32)
-                    logger.info("Upcast UNet to float32 on MPS for numerical stability")
-                if hasattr(self.pipeline, "vae"):
-                    self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
-                    logger.info("Upcast VAE to float32 on MPS for numerical stability")
 
             logger.info(f"SDXL model {model_config.name} loaded on {self.device}")
             return True
