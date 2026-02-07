@@ -927,11 +927,11 @@ class ModelRegistry:
                 "hardware_requirements": {
                     "min_vram_gb": 12,
                     "recommended_vram_gb": 18,
-                    "min_ram_gb": 16,
+                    "min_ram_gb": 24,
                     "recommended_ram_gb": 32,
                     "disk_space_gb": 14,
                     "supported_devices": ["CUDA", "MPS"],
-                    "performance_notes": "Zhipu AI 6B model with GLM-4 text encoder. Bilingual Chinese/English. Tight fit on 16GB Apple Silicon."
+                    "performance_notes": "Zhipu AI 6B model with GLM-4 text encoder. Bilingual Chinese/English. MPS requires 24GB+ unified memory (no CPU offload on Apple Silicon)."
                 },
                 "license_info": {
                     "type": "Apache 2.0",
@@ -954,11 +954,11 @@ class ModelRegistry:
                 "hardware_requirements": {
                     "min_vram_gb": 8,
                     "recommended_vram_gb": 18,
-                    "min_ram_gb": 16,
+                    "min_ram_gb": 32,
                     "recommended_ram_gb": 32,
                     "disk_space_gb": 18,
                     "supported_devices": ["CUDA", "MPS"],
-                    "performance_notes": "Kuaishou 8.6B model with ChatGLM3 encoder. Bilingual Chinese/English. Midjourney-v6 level quality."
+                    "performance_notes": "Kuaishou 8.6B model with ChatGLM3 encoder. Bilingual Chinese/English. Midjourney-v6 level quality. MPS requires 32GB unified memory (no CPU offload on Apple Silicon)."
                 },
                 "license_info": {
                     "type": "Kolors License",
@@ -981,11 +981,11 @@ class ModelRegistry:
                 "hardware_requirements": {
                     "min_vram_gb": 6,
                     "recommended_vram_gb": 16,
-                    "min_ram_gb": 16,
+                    "min_ram_gb": 24,
                     "recommended_ram_gb": 32,
                     "disk_space_gb": 12,
                     "supported_devices": ["CUDA", "MPS"],
-                    "performance_notes": "Tencent 1.5B model with dual text encoders (mT5 + bilingual CLIP). Fine-grained Chinese understanding."
+                    "performance_notes": "Tencent 1.5B model with dual text encoders (mT5 + bilingual CLIP). Fine-grained Chinese understanding. MPS requires 24GB+ unified memory (no CPU offload on Apple Silicon)."
                 },
                 "license_info": {
                     "type": "Tencent Hunyuan Community License",

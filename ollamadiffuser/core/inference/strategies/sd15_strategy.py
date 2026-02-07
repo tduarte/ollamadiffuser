@@ -23,19 +23,29 @@ class SD15Strategy(InferenceStrategy):
             self.model_config = model_config
 
             load_kwargs = {**SAFETY_DISABLED_KWARGS}
-            dtype = self._get_dtype(device)
-
-            if model_config.variant == "fp16" and device not in ("cpu", "mps"):
-                load_kwargs["torch_dtype"] = dtype
-                load_kwargs["variant"] = "fp16"
-            else:
+            if device == "cpu":
                 load_kwargs["torch_dtype"] = torch.float32
+            elif device == "mps":
+                load_kwargs["torch_dtype"] = torch.float16
+                if model_config.variant == "fp16":
+                    load_kwargs["variant"] = "fp16"
+            else:  # CUDA
+                if model_config.variant == "fp16":
+                    load_kwargs["torch_dtype"] = torch.float16
+                    load_kwargs["variant"] = "fp16"
+                else:
+                    load_kwargs["torch_dtype"] = self._get_dtype(device)
 
             self.pipeline = StableDiffusionPipeline.from_pretrained(
                 model_config.path, **load_kwargs
             )
             self._move_to_device(device)
             self._apply_memory_optimizations()
+
+            # MPS + float16: upcast VAE to float32 for numerical stability
+            if device == "mps" and hasattr(self.pipeline, "vae"):
+                self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
+                logger.info("Upcast VAE to float32 on MPS for numerical stability")
 
             logger.info(f"SD 1.5 model {model_config.name} loaded on {self.device}")
             return True
@@ -97,7 +107,7 @@ class SD15Strategy(InferenceStrategy):
 
             logger.info(f"Generating SD 1.5 image: steps={steps}, guidance={guidance}, seed={used_seed}")
             output = self.pipeline(**gen_kwargs)
-            return output.images[0]
+            return self._sanitize_image(output.images[0])
         except Exception as e:
             logger.error(f"SD 1.5 generation failed: {e}")
             return self._create_error_image(str(e), prompt)
@@ -115,7 +125,7 @@ class SD15Strategy(InferenceStrategy):
         gen_kwargs["strength"] = strength
 
         output = img2img_pipe(**gen_kwargs)
-        return output.images[0]
+        return self._sanitize_image(output.images[0])
 
     def _inpaint(self, gen_kwargs: dict, image: Image.Image, mask_image: Image.Image, strength: float) -> Image.Image:
         """Run inpainting generation"""
@@ -131,4 +141,4 @@ class SD15Strategy(InferenceStrategy):
         gen_kwargs["strength"] = strength
 
         output = inpaint_pipe(**gen_kwargs)
-        return output.images[0]
+        return self._sanitize_image(output.images[0])

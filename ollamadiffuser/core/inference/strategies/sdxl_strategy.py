@@ -12,6 +12,16 @@ from ...config.settings import ModelConfig
 logger = logging.getLogger(__name__)
 
 
+def _mps_supports_bfloat16() -> bool:
+    """Check if MPS backend supports bfloat16 (requires PyTorch 2.3+)."""
+    try:
+        t = torch.tensor([1.0], dtype=torch.bfloat16, device="mps")
+        _ = t + t
+        return True
+    except (RuntimeError, TypeError):
+        return False
+
+
 class SDXLStrategy(InferenceStrategy):
     """Strategy for Stable Diffusion XL models"""
 
@@ -23,13 +33,21 @@ class SDXLStrategy(InferenceStrategy):
             self.model_config = model_config
 
             load_kwargs = {**SAFETY_DISABLED_KWARGS}
-            if model_config.variant == "fp16" and device not in ("cpu", "mps"):
-                load_kwargs["torch_dtype"] = torch.float16
-                load_kwargs["variant"] = "fp16"
-            elif device == "mps":
+            if device == "cpu":
                 load_kwargs["torch_dtype"] = torch.float32
-            else:
-                load_kwargs["torch_dtype"] = self._get_dtype(device)
+            elif device == "mps":
+                if _mps_supports_bfloat16():
+                    load_kwargs["torch_dtype"] = torch.bfloat16
+                else:
+                    load_kwargs["torch_dtype"] = torch.float16
+                if model_config.variant == "fp16":
+                    load_kwargs["variant"] = "fp16"
+            else:  # CUDA
+                if model_config.variant == "fp16":
+                    load_kwargs["torch_dtype"] = torch.float16
+                    load_kwargs["variant"] = "fp16"
+                else:
+                    load_kwargs["torch_dtype"] = self._get_dtype(device)
 
             self.pipeline = StableDiffusionXLPipeline.from_pretrained(
                 model_config.path, **load_kwargs
@@ -52,6 +70,16 @@ class SDXLStrategy(InferenceStrategy):
 
             self._move_to_device(device)
             self._apply_memory_optimizations()
+
+            # MPS: upcast UNet and VAE to float32 for numerical stability
+            # Half-precision attention on MPS can overflow → NaN in latent space
+            if device == "mps":
+                if hasattr(self.pipeline, "unet"):
+                    self.pipeline.unet = self.pipeline.unet.to(dtype=torch.float32)
+                    logger.info("Upcast UNet to float32 on MPS for numerical stability")
+                if hasattr(self.pipeline, "vae"):
+                    self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
+                    logger.info("Upcast VAE to float32 on MPS for numerical stability")
 
             logger.info(f"SDXL model {model_config.name} loaded on {self.device}")
             return True
@@ -100,7 +128,7 @@ class SDXLStrategy(InferenceStrategy):
 
             logger.info(f"Generating SDXL image: steps={steps}, guidance={guidance}, seed={used_seed}")
             output = self.pipeline(**gen_kwargs)
-            return output.images[0]
+            return self._sanitize_image(output.images[0])
         except Exception as e:
             logger.error(f"SDXL generation failed: {e}")
             return self._create_error_image(str(e), prompt)
@@ -115,7 +143,7 @@ class SDXLStrategy(InferenceStrategy):
         gen_kwargs["image"] = image
         gen_kwargs["strength"] = strength
         output = pipe(**gen_kwargs)
-        return output.images[0]
+        return self._sanitize_image(output.images[0])
 
     def _inpaint(self, gen_kwargs: dict, image: Image.Image, mask_image: Image.Image, strength: float) -> Image.Image:
         from diffusers import StableDiffusionXLInpaintPipeline
@@ -128,4 +156,4 @@ class SDXLStrategy(InferenceStrategy):
         gen_kwargs["mask_image"] = mask_image
         gen_kwargs["strength"] = strength
         output = pipe(**gen_kwargs)
-        return output.images[0]
+        return self._sanitize_image(output.images[0])

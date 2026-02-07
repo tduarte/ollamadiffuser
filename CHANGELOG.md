@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.8] - 2026-02-06
+
+### 🍎 MPS Float16 for SD15, SDXL, ControlNet
+- **SDXL float16 on MPS**: Changed from float32 to float16, fixing OOM on 16GB Macs (~7GB instead of ~13GB). VAE upcast to float32 for numerical stability.
+- **SD 1.5 float16 on MPS**: Changed from float32 to float16 for consistency and lower memory usage (~1.7GB instead of ~3.4GB). VAE upcast to float32.
+- **ControlNet float16 on MPS**: Changed from float32 to float16, matching SD 1.5/SDXL. VAE upcast to float32.
+- **Variant passthrough on MPS**: SDXL, SD 1.5, and ControlNet now pass `variant="fp16"` on MPS when the model has fp16 variant files (previously only passed on CUDA).
+
+### 📋 Registry Hardware Requirements
+- **cogview4**: min_ram_gb 16 → 24 (14GB model won't fit on 16GB Mac with OS overhead)
+- **kolors**: min_ram_gb 16 → 32 (18GB model requires 32GB Apple Silicon)
+- **hunyuan-dit**: min_ram_gb 16 → 24 (12GB model won't fit on 16GB Mac with OS overhead)
+- **Updated performance_notes**: All three now explain that MPS requires more unified memory because CPU offload doesn't help on Apple Silicon
+
 ## [2.0.7] - 2026-02-05
 
 ### 🍎 MPS Dtype Overhaul

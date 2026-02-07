@@ -5,6 +5,7 @@ import random
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+import numpy as np
 import torch
 from PIL import Image
 
@@ -163,6 +164,17 @@ class InferenceStrategy(ABC):
         except Exception as e:
             logger.error(f"Failed to unload LoRA: {e}")
             return False
+
+    @staticmethod
+    def _sanitize_image(image: Image.Image) -> Image.Image:
+        """Clamp NaN/Inf pixels to avoid 'invalid value encountered in cast' on MPS."""
+        arr = np.array(image, dtype=np.float32)
+        if np.isnan(arr).any() or np.isinf(arr).any():
+            logger.warning("NaN/Inf detected in generated image — clamping to valid range")
+            arr = np.nan_to_num(arr, nan=0.0, posinf=255.0, neginf=0.0)
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+            return Image.fromarray(arr)
+        return image
 
     def _create_error_image(self, error_msg: str, prompt: str) -> Image.Image:
         """Create an error placeholder image"""

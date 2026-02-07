@@ -36,13 +36,18 @@ class ControlNetStrategy(InferenceStrategy):
             pipeline_class = StableDiffusionXLControlNetPipeline if is_sdxl else StableDiffusionControlNetPipeline
 
             load_kwargs = {**SAFETY_DISABLED_KWARGS}
-            if device in ("cpu", "mps"):
+            if device == "cpu":
                 load_kwargs["torch_dtype"] = torch.float32
-            elif model_config.variant == "fp16":
+            elif device == "mps":
                 load_kwargs["torch_dtype"] = torch.float16
-                load_kwargs["variant"] = "fp16"
-            else:
-                load_kwargs["torch_dtype"] = self._get_dtype(device)
+                if model_config.variant == "fp16":
+                    load_kwargs["variant"] = "fp16"
+            else:  # CUDA
+                if model_config.variant == "fp16":
+                    load_kwargs["torch_dtype"] = torch.float16
+                    load_kwargs["variant"] = "fp16"
+                else:
+                    load_kwargs["torch_dtype"] = self._get_dtype(device)
 
             # Load ControlNet model
             logger.info(f"Loading ControlNet model from: {model_config.path}")
@@ -78,6 +83,11 @@ class ControlNetStrategy(InferenceStrategy):
             self._move_to_device(device)
             self.controlnet = self.controlnet.to(self.device)
             self._apply_memory_optimizations()
+
+            # MPS + float16: upcast VAE to float32 for numerical stability
+            if device == "mps" and hasattr(self.pipeline, "vae"):
+                self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
+                logger.info("Upcast VAE to float32 on MPS for numerical stability")
 
             logger.info(f"ControlNet model {model_config.name} loaded on {self.device}")
             return True
@@ -131,7 +141,7 @@ class ControlNetStrategy(InferenceStrategy):
         try:
             logger.info(f"Generating ControlNet image: steps={steps}, guidance={guidance}, seed={used_seed}")
             output = self.pipeline(**gen_kwargs)
-            return output.images[0]
+            return self._sanitize_image(output.images[0])
         except Exception as e:
             logger.error(f"ControlNet generation failed: {e}")
             return self._create_error_image(str(e), prompt)

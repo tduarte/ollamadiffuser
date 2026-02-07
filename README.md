@@ -518,15 +518,15 @@ Each model type has a dedicated strategy class handling loading and generation:
 
 ```
 InferenceEngine (facade)
-  -> SD15Strategy            (512x512, float32 on MPS, img2img, inpainting)
-  -> SDXLStrategy            (1024x1024, img2img, inpainting, scheduler overrides)
-  -> FluxStrategy            (schnell/dev/Fill/Canny/Depth, dynamic pipeline class)
-  -> SD3Strategy             (1024x1024, 28 steps, guidance=3.5)
-  -> ControlNetStrategy      (SD15 + SDXL base models)
-  -> VideoStrategy           (AnimateDiff, 16 frames)
-  -> HiDreamStrategy         (bfloat16, multi-prompt)
+  -> SD15Strategy            (512x512, float16 on MPS + VAE upcast, img2img, inpainting)
+  -> SDXLStrategy            (1024x1024, float16 on MPS + VAE upcast, img2img, inpainting, scheduler overrides)
+  -> FluxStrategy            (schnell/dev/Fill/Canny/Depth, bfloat16 on MPS, dynamic pipeline class)
+  -> SD3Strategy             (1024x1024, float16 on MPS, 28 steps, guidance=3.5)
+  -> ControlNetStrategy      (SD15 + SDXL base models, float16 on MPS + VAE upcast)
+  -> VideoStrategy           (AnimateDiff, float16 on MPS, 16 frames)
+  -> HiDreamStrategy         (bfloat16 on MPS, multi-prompt)
   -> GGUFStrategy            (quantized via stable-diffusion-cpp)
-  -> GenericPipelineStrategy (any diffusers pipeline via config)
+  -> GenericPipelineStrategy (any diffusers pipeline via config, per-model dtype on MPS)
 ```
 
 The `GenericPipelineStrategy` dynamically loads any `diffusers` pipeline class specified in the model registry, so new models can be added with zero code changes.
@@ -621,9 +621,11 @@ with open("control.jpg", "rb") as f:
 - **Storage**: SSD with 50GB+ free space
 
 #### For Apple Silicon (Mac Mini / MacBook)
-- **16GB unified memory**: PixArt-Sigma, SANA 1.5, DreamShaper, SD 1.5/XL, GGUF q2k-q5ks
-- **24GB+ unified memory**: CogView4, Kolors, Lumina 2.0, GGUF q6k-q8
+- **16GB unified memory**: PixArt-Sigma, SANA 1.5, Lumina 2.0, DreamShaper, SD 1.5, SDXL/SDXL Turbo, GGUF q2k-q5ks
+- **24GB+ unified memory**: CogView4, Hunyuan-DiT, FLUX.1-schnell, GGUF q6k-q8
+- **32GB unified memory**: Kolors, SD 3.5 Large, all MPS-supported models
 - **GGUF with Metal**: Install with `CMAKE_ARGS="-DSD_METAL=ON"` for GPU acceleration
+- **Note**: CPU offload does not help on Apple Silicon (unified memory) -- the full model must fit in RAM
 - Run `ollamadiffuser recommend` to see what fits your hardware
 
 #### For GGUF Models (Memory Efficient)
