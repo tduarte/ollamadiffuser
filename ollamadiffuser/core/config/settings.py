@@ -35,10 +35,10 @@ class Settings:
         self.cache_dir = self.config_dir / "cache"
         self.config_file = self.config_dir / "config.json"
         
-        # Ensure directories exist
-        self.config_dir.mkdir(exist_ok=True)
-        self.models_dir.mkdir(exist_ok=True)
-        self.cache_dir.mkdir(exist_ok=True)
+        # Ensure directories exist (check first — mkdir fails on symlinks in Python 3.10)
+        for d in (self.config_dir, self.models_dir, self.cache_dir):
+            if not d.exists():
+                d.mkdir(parents=True, exist_ok=True)
         
         # Default configuration
         self.server = ServerConfig()

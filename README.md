@@ -113,9 +113,9 @@ ollamadiffuser run flux.1-dev-gguf-q4ks
 # See which models fit your Mac
 ollamadiffuser recommend
 
-# Best lightweight model (0.6B, <6GB)
-ollamadiffuser pull pixart-sigma
-ollamadiffuser run pixart-sigma
+# Fast single-step model (<6GB)
+ollamadiffuser pull sdxl-turbo
+ollamadiffuser run sdxl-turbo
 
 # GGUF with Metal acceleration (6GB, great quality)
 pip install "ollamadiffuser[gguf]"
@@ -621,7 +621,7 @@ with open("control.jpg", "rb") as f:
 - **Storage**: SSD with 50GB+ free space
 
 #### For Apple Silicon (Mac Mini / MacBook)
-- **16GB unified memory**: PixArt-Sigma, SANA 1.5, Lumina 2.0, DreamShaper, SD 1.5, SDXL/SDXL Turbo, GGUF q2k-q5ks
+- **16GB unified memory**: SANA 1.5, Lumina 2.0, DreamShaper, SD 1.5, SDXL/SDXL Turbo, GGUF q2k-q5ks
 - **24GB+ unified memory**: CogView4, Hunyuan-DiT, FLUX.1-schnell, GGUF q6k-q8
 - **32GB unified memory**: Kolors, SD 3.5 Large, all MPS-supported models
 - **GGUF with Metal**: Install with `CMAKE_ARGS="-DSD_METAL=ON"` for GPU acceleration

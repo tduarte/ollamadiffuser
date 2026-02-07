@@ -853,8 +853,8 @@ class ModelRegistry:
                     "min_ram_gb": 16,
                     "recommended_ram_gb": 32,
                     "disk_space_gb": 10,
-                    "supported_devices": ["CUDA", "MPS"],
-                    "performance_notes": "Compact 4B FLUX.2 model. Apache 2.0 licensed. Requires diffusers from source."
+                    "supported_devices": ["CUDA"],
+                    "performance_notes": "Compact 4B FLUX.2 model. Apache 2.0 licensed. Requires diffusers from source. MPS not supported."
                 },
                 "license_info": {
                     "type": "Apache 2.0",
@@ -1037,8 +1037,8 @@ class ModelRegistry:
                     "min_ram_gb": 8,
                     "recommended_ram_gb": 16,
                     "disk_space_gb": 3,
-                    "supported_devices": ["CUDA", "MPS", "CPU"],
-                    "performance_notes": "Very lightweight 0.6B model. 4K capable. Outperforms much larger models."
+                    "supported_devices": ["CUDA", "CPU"],
+                    "performance_notes": "Very lightweight 0.6B model. 4K capable. MPS not supported."
                 },
                 "license_info": {
                     "type": "PixArt Open License",

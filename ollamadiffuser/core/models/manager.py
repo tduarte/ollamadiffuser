@@ -163,17 +163,31 @@ class ModelManager:
                 "progress_callback": progress_callback
             }
             
-            # Add GGUF-specific file filtering
+            # Add download filtering
             if self.is_gguf_model(model_name):
                 variant = model_info.get("variant", "gguf")
                 patterns = gguf_loader.get_gguf_download_patterns(variant)
                 download_kwargs["allow_patterns"] = patterns["allow_patterns"]
                 download_kwargs["ignore_patterns"] = patterns["ignore_patterns"]
-                
+
                 if progress_callback:
                     progress_callback(f"🔍 GGUF model detected - downloading only required files for {variant}")
                     progress_callback(f"📦 Required files: {len(patterns['allow_patterns'])} files")
                     progress_callback(f"🚫 Ignoring: {len(patterns['ignore_patterns'])} other GGUF variants")
+            else:
+                # Skip files never used: safety_checker (always disabled), preview images, docs
+                download_kwargs["ignore_patterns"] = [
+                    "*.git*",
+                    "*.md",
+                    "*.png",
+                    "*.jpg",
+                    "*.jpeg",
+                    "*.webp",
+                    "safety_checker/*",
+                    "feature_extractor/*",
+                ]
+                if progress_callback:
+                    progress_callback(f"📦 Skipping safety_checker, feature_extractor, and preview images")
             
             # Download main model using robust downloader with enhanced progress
             from ..utils.download_utils import robust_snapshot_download

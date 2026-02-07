@@ -16,11 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Generic strategy**: Skip manual VAE upcast for pipelines with `upcast_vae` method (SDXL-family); only manually upcast for pipelines without built-in handling.
 - **Variant passthrough on MPS**: SDXL, SD 1.5, and ControlNet now pass `variant="fp16"` on MPS when the model has fp16 variant files (previously only passed on CUDA).
 
-### 📋 Registry Hardware Requirements
+### 📦 Download Filtering
+- **Non-GGUF models**: Skip `safety_checker/`, `feature_extractor/`, preview images (`.png`/`.jpg`/`.webp`), READMEs, and git metadata during `ollamadiffuser pull`. Saves ~1.2GB for SD models (safety_checker CLIP model is never loaded).
+
+### 📋 Registry Updates
+- **pixart-sigma**: Removed MPS from supported_devices (not working on Apple Silicon)
+- **flux.2-klein-4b**: Removed MPS from supported_devices (not working on Apple Silicon)
 - **cogview4**: min_ram_gb 16 → 24 (14GB model won't fit on 16GB Mac with OS overhead)
 - **kolors**: min_ram_gb 16 → 32 (18GB model requires 32GB Apple Silicon)
 - **hunyuan-dit**: min_ram_gb 16 → 24 (12GB model won't fit on 16GB Mac with OS overhead)
 - **Updated performance_notes**: All three now explain that MPS requires more unified memory because CPU offload doesn't help on Apple Silicon
+
+### 🐛 Bug Fixes
+- **Symlink models_dir crash**: Fixed `FileExistsError` when `~/.ollamadiffuser/models` is a symlink (Python 3.10 `mkdir(exist_ok=True)` fails on symlinks)
 
 ## [2.0.7] - 2026-02-05
 
