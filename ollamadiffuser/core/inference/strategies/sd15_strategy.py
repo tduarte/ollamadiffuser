@@ -36,9 +36,19 @@ class SD15Strategy(InferenceStrategy):
                 else:
                     load_kwargs["torch_dtype"] = self._get_dtype(device)
 
-            self.pipeline = StableDiffusionPipeline.from_pretrained(
-                model_config.path, **load_kwargs
-            )
+            try:
+                self.pipeline = StableDiffusionPipeline.from_pretrained(
+                    model_config.path, **load_kwargs
+                )
+            except (OSError, ValueError):
+                if "variant" in load_kwargs:
+                    logger.info(f"No {model_config.variant} variant files found, loading without variant")
+                    load_kwargs.pop("variant")
+                    self.pipeline = StableDiffusionPipeline.from_pretrained(
+                        model_config.path, **load_kwargs
+                    )
+                else:
+                    raise
             self._move_to_device(device)
             self._apply_memory_optimizations()
 

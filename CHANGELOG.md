@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.9] - 2026-02-07
+
+### 📦 Smart Download Filtering
+- **Pipeline-only downloads**: For known model types (SD 1.5, SDXL, SD3, FLUX), only download diffusers pipeline directories — skips root-level monolithic checkpoints, ONNX/Flax/OpenVINO exports. Saves 10–200 GB per model (e.g. DreamShaper 212 GB → 4 GB, SDXL-Turbo 52 GB → 7 GB).
+- **Default ignore patterns**: All non-GGUF models skip `safety_checker/`, `feature_extractor/`, `*.ckpt`, `*.onnx`, `*.msgpack`, `*.xml`, `comfyui/`, `text_encoders/`, `__pycache__/`.
+- **SDXL-Lightning fix**: Downloads only the 4-step checkpoint (6.5 GB) instead of all variants (52 GB). Uses `from_single_file` since the repo has no diffusers pipeline layout.
+- **Per-model allow_patterns**: AuraFlow and FLUX.2-dev skip root-level monolithic checkpoints.
+
+### ⚡ Loading Improvements
+- **SDXL single-file loading**: SDXLStrategy now supports `from_single_file` for models like SDXL-Lightning that ship a single `.safetensors` checkpoint instead of a diffusers pipeline layout. Configured via `parameters.single_file` in the model registry.
+- **Variant fallback in all strategies**: SD15, SDXL, SD3, and ControlNet strategies now catch `OSError`/`ValueError` when fp16 variant files are missing and retry loading without `variant`. Previously only the generic strategy had this fallback.
+- **Registry parameter refresh on load**: `load_model()` now merges the latest registry parameters into the saved model config, so new fields (e.g. `single_file`, `allow_patterns`) are picked up without requiring a re-pull.
+
+### 🐛 Bug Fixes
+- **Skip attention slicing on MPS**: Attention slicing causes NaN in float16 UNet output for some SDXL models (e.g. RealVisXL) on Apple Silicon. Disabled on MPS since unified memory makes chunking unnecessary.
+
 ## [2.0.8] - 2026-02-06
 
 ### 🍎 MPS Float16 for SD15, SDXL, ControlNet

@@ -12,6 +12,71 @@ from .gguf_loader import gguf_loader, GGUF_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
+# Known pipeline directory patterns by model_type.
+# Downloading only these directories skips root-level monolithic checkpoints,
+# ONNX/Flax/OpenVINO exports, and other non-diffusers files.
+_PIPELINE_ALLOW_PATTERNS = {
+    "sd15": [
+        "model_index.json",
+        "scheduler/*",
+        "text_encoder/*",
+        "tokenizer/*",
+        "unet/*",
+        "vae/*",
+    ],
+    "sdxl": [
+        "model_index.json",
+        "scheduler/*",
+        "text_encoder/*",
+        "text_encoder_2/*",
+        "tokenizer/*",
+        "tokenizer_2/*",
+        "unet/*",
+        "vae/*",
+    ],
+    "sd3": [
+        "model_index.json",
+        "scheduler/*",
+        "text_encoder/*",
+        "text_encoder_2/*",
+        "text_encoder_3/*",
+        "tokenizer/*",
+        "tokenizer_2/*",
+        "tokenizer_3/*",
+        "transformer/*",
+        "vae/*",
+    ],
+    "flux": [
+        "model_index.json",
+        "scheduler/*",
+        "text_encoder/*",
+        "text_encoder_2/*",
+        "tokenizer/*",
+        "tokenizer_2/*",
+        "transformer/*",
+        "vae/*",
+    ],
+}
+
+# Default files to skip for all non-GGUF models.
+# These are safe to ignore: we never load safety_checker (always None),
+# and we only use PyTorch — not ONNX, Flax, or OpenVINO.
+_DEFAULT_IGNORE_PATTERNS = [
+    "*.ckpt",
+    "*.onnx",
+    "*.onnx_data",
+    "*.msgpack",
+    "*.xml",
+    "*.pb",
+    "*.git*",
+    "safety_checker/*",
+    "feature_extractor/*",
+    "comfyui/*",
+    "text_encoders/*",
+    "__pycache__/*",
+]
+
+
 class ModelManager:
     """Model manager with dynamic registry support and GGUF compatibility"""
     
@@ -175,19 +240,22 @@ class ModelManager:
                     progress_callback(f"📦 Required files: {len(patterns['allow_patterns'])} files")
                     progress_callback(f"🚫 Ignoring: {len(patterns['ignore_patterns'])} other GGUF variants")
             else:
-                # Skip files never used: safety_checker (always disabled), preview images, docs
-                download_kwargs["ignore_patterns"] = [
-                    "*.git*",
-                    "*.md",
-                    "*.png",
-                    "*.jpg",
-                    "*.jpeg",
-                    "*.webp",
-                    "safety_checker/*",
-                    "feature_extractor/*",
-                ]
+                # Model-specific allow_patterns override (e.g. single-file models)
+                if "allow_patterns" in model_info:
+                    download_kwargs["allow_patterns"] = model_info["allow_patterns"]
+                else:
+                    # Use model_type-based pipeline patterns to skip root-level
+                    # monolithic checkpoints, ONNX/Flax exports, etc.
+                    model_type = model_info.get("model_type", "")
+                    if model_type in _PIPELINE_ALLOW_PATTERNS:
+                        download_kwargs["allow_patterns"] = _PIPELINE_ALLOW_PATTERNS[model_type]
+
+                # Always apply ignore patterns (ckpt, onnx, flax, safety_checker, etc.)
+                download_kwargs["ignore_patterns"] = model_info.get(
+                    "ignore_patterns", _DEFAULT_IGNORE_PATTERNS
+                )
                 if progress_callback:
-                    progress_callback(f"📦 Skipping safety_checker, feature_extractor, and preview images")
+                    progress_callback(f"📦 Filtering downloads: skipping non-PyTorch files and safety_checker")
             
             # Download main model using robust downloader with enhanced progress
             from ..utils.download_utils import robust_snapshot_download
@@ -293,7 +361,19 @@ class ModelManager:
         
         try:
             model_config = settings.models[model_name]
-            
+
+            # Refresh parameters from registry so new fields (e.g. single_file,
+            # allow_patterns) are picked up without requiring a re-pull.
+            registry_info = model_registry.get_model(model_name)
+            if registry_info and registry_info.get("parameters"):
+                saved_params = model_config.parameters or {}
+                registry_params = registry_info["parameters"]
+                # Registry is the base; saved overrides (preserves user customizations)
+                merged = {**registry_params, **saved_params}
+                if merged != saved_params:
+                    model_config.parameters = merged
+                    logger.info(f"Refreshed model parameters from registry for {model_name}")
+
             # Check if this is a GGUF model
             if self.is_gguf_model(model_name):
                 if not GGUF_AVAILABLE:

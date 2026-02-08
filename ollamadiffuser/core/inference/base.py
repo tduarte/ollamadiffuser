@@ -115,7 +115,10 @@ class InferenceStrategy(ABC):
 
     def _apply_memory_optimizations(self):
         """Apply common memory optimizations"""
-        if hasattr(self.pipeline, "enable_attention_slicing"):
+        # Attention slicing splits attention into chunks to save VRAM.
+        # Skip on MPS: unified memory makes it unnecessary, and it causes
+        # NaN in float16 UNet output for some SDXL models (e.g. RealVisXL).
+        if self.device != "mps" and hasattr(self.pipeline, "enable_attention_slicing"):
             self.pipeline.enable_attention_slicing()
             logger.info("Enabled attention slicing")
         if hasattr(self.pipeline, "enable_vae_tiling"):

@@ -74,11 +74,23 @@ class ControlNetStrategy(InferenceStrategy):
             base_config = settings.models[base_model_name]
 
             # Load pipeline with controlnet
-            self.pipeline = pipeline_class.from_pretrained(
-                base_config.path,
-                controlnet=self.controlnet,
-                **load_kwargs,
-            )
+            try:
+                self.pipeline = pipeline_class.from_pretrained(
+                    base_config.path,
+                    controlnet=self.controlnet,
+                    **load_kwargs,
+                )
+            except (OSError, ValueError):
+                if "variant" in load_kwargs:
+                    logger.info(f"No {model_config.variant} variant files found, loading without variant")
+                    load_kwargs.pop("variant")
+                    self.pipeline = pipeline_class.from_pretrained(
+                        base_config.path,
+                        controlnet=self.controlnet,
+                        **load_kwargs,
+                    )
+                else:
+                    raise
 
             self._move_to_device(device)
             self.controlnet = self.controlnet.to(self.device)

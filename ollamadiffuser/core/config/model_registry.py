@@ -704,9 +704,11 @@ class ModelRegistry:
                 "repo_id": "ByteDance/SDXL-Lightning",
                 "model_type": "sdxl",
                 "variant": "fp16",
+                "allow_patterns": ["sdxl_lightning_4step.safetensors"],
                 "parameters": {
                     "num_inference_steps": 4,
                     "guidance_scale": 0.0,
+                    "single_file": "sdxl_lightning_4step.safetensors",
                     "scheduler_class": "EulerDiscreteScheduler",
                     "scheduler_kwargs": {
                         "timestep_spacing": "trailing"
@@ -814,6 +816,7 @@ class ModelRegistry:
                 "repo_id": "black-forest-labs/FLUX.2-dev",
                 "model_type": "generic",
                 "variant": "fp16",
+                "allow_patterns": ["model_index.json", "scheduler/*", "text_encoder/*", "text_encoder_2/*", "tokenizer/*", "tokenizer_2/*", "transformer/*", "vae/*"],
                 "parameters": {
                     "pipeline_class": "Flux2Pipeline",
                     "num_inference_steps": 28,
@@ -1051,6 +1054,7 @@ class ModelRegistry:
                 "repo_id": "fal/AuraFlow-v0.3",
                 "model_type": "generic",
                 "variant": "fp16",
+                "allow_patterns": ["model_index.json", "scheduler/*", "text_encoder/*", "tokenizer/*", "transformer/*", "vae/*"],
                 "parameters": {
                     "pipeline_class": "AuraFlowPipeline",
                     "num_inference_steps": 50,

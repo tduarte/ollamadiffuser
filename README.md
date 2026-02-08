@@ -58,6 +58,7 @@ Most models work **without any token** -- just install and go. See [Hugging Face
 - **🔄 LoRA Integration**: Dynamic LoRA loading and management
 - **🔌 MCP & OpenClaw**: Model Context Protocol server for AI assistant integration (OpenClaw, Claude Code, Cursor)
 - **🍎 Apple Silicon**: MPS dtype handling (per-model dtype, VAE upcast, NaN sanitization), GGUF Metal acceleration, `ollamadiffuser recommend` for hardware-aware model suggestions
+- **📦 Smart Downloads**: `ollamadiffuser pull` downloads only diffusers pipeline files — skips root-level checkpoints, ONNX/Flax exports, and safety_checker. Saves 10–200 GB per model.
 - **📦 GGUF Support**: Memory-efficient quantized models (3GB VRAM minimum!) with CUDA and Metal acceleration
 - **🌐 Multiple Interfaces**: CLI, Python API, Web UI, and REST API
 - **📦 Model Management**: Easy installation and switching between models
@@ -236,7 +237,7 @@ Choose from 40+ models spanning every major architecture:
 | Model | Steps | VRAM | Notes |
 |-------|-------|------|-------|
 | `sdxl-turbo` | 1 | 6GB+ | Single-step distilled SDXL |
-| `sdxl-lightning-4step` | 4 | 6GB+ | ByteDance, custom scheduler |
+| `sdxl-lightning-4step` | 4 | 6GB+ | ByteDance, single-file checkpoint, custom scheduler |
 | `stable-diffusion-3.5-large-turbo` | 4 | 12GB+ | Distilled SD 3.5 Large |
 | `z-image-turbo` | 8 | 10GB+ | Alibaba 6B turbo |
 
@@ -488,7 +489,7 @@ else:
 
 ### Fast / Turbo Models
 - **SDXL Turbo**: Single-step inference from Stability AI
-- **SDXL Lightning**: 4-step with custom scheduler from ByteDance
+- **SDXL Lightning**: 4-step single-file checkpoint from ByteDance (6.5 GB download)
 - **Z-Image Turbo**: 8-step turbo from Alibaba
 
 ### Community Fine-Tunes
@@ -519,7 +520,7 @@ Each model type has a dedicated strategy class handling loading and generation:
 ```
 InferenceEngine (facade)
   -> SD15Strategy            (512x512, float16 on MPS + VAE upcast, img2img, inpainting)
-  -> SDXLStrategy            (1024x1024, float16 on MPS, diffusers force_upcast, img2img, inpainting, scheduler overrides)
+  -> SDXLStrategy            (1024x1024, float16 on MPS, diffusers force_upcast, img2img, inpainting, scheduler overrides, single-file)
   -> FluxStrategy            (schnell/dev/Fill/Canny/Depth, bfloat16 on MPS, dynamic pipeline class)
   -> SD3Strategy             (1024x1024, float16 on MPS, 28 steps, guidance=3.5)
   -> ControlNetStrategy      (SD15: VAE upcast, SDXL: diffusers force_upcast, float16 on MPS)
@@ -537,6 +538,7 @@ Models are automatically configured with optimal settings:
 - **Device Detection**: Automatic CUDA/MPS/CPU selection
 - **Precision Handling**: FP16/BF16 per model type
 - **Safety Disabled**: Unified `SAFETY_DISABLED_KWARGS` (no monkey-patching)
+- **Smart Downloads**: Pipeline-only filtering by model type — skips ONNX, Flax, root checkpoints, and safety_checker
 
 ## 🔧 Advanced Usage
 
