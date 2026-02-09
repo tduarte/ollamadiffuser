@@ -268,13 +268,21 @@ class GGUFModelLoader:
             negative_prompt = kwargs.get('negative_prompt', "")
             
             # Allow custom sampler, with FLUX-optimized default
-            sampler = kwargs.get('sampler', kwargs.get('sample_method', 'dpmpp2m'))
-            
+            sampler = kwargs.get('sampler', kwargs.get('sample_method', 'euler'))
+
+            # Normalize sampler names: convert dpmpp → dpm++ format
+            sampler_name_map = {
+                'dpmpp2m': 'dpm++2m',
+                'dpmpp2mv2': 'dpm++2mv2',
+                'dpmpp2s_a': 'dpm++2s_a',
+            }
+            sampler = sampler_name_map.get(sampler, sampler)
+
             # Validate sampler and provide fallback
-            valid_samplers = ['euler_a', 'euler', 'heun', 'dpm2', 'dpmpp2s_a', 'dpmpp2m', 'dpmpp2mv2', 'ipndm', 'ipndm_v', 'lcm', 'ddim_trailing', 'tcd']
+            valid_samplers = ['default', 'euler_a', 'euler', 'heun', 'dpm2', 'dpm++2s_a', 'dpm++2m', 'dpm++2mv2', 'ipndm', 'ipndm_v', 'lcm', 'ddim_trailing', 'tcd', 'res_multistep', 'res_2s']
             if sampler not in valid_samplers:
-                logger.warning(f"Invalid sampler '{sampler}', falling back to 'dpmpp2m'")
-                sampler = 'dpmpp2m'
+                logger.warning(f"Invalid sampler '{sampler}', falling back to 'euler'")
+                sampler = 'euler'
             
             # Ensure all values are proper types and not None
             steps = int(steps) if steps is not None else 20
@@ -297,9 +305,9 @@ class GGUFModelLoader:
                     logger.info("Using high precision quantization - excellent quality expected.")
             
             # Generate image using stable-diffusion.cpp
-            # According to the documentation, txt_to_img returns a list of PIL Images
+            # generate_image returns a list of PIL Images
             try:
-                result = self.stable_diffusion.txt_to_img(
+                result = self.stable_diffusion.generate_image(
                     prompt=prompt,
                     negative_prompt=negative_prompt if negative_prompt else "",
                     cfg_scale=cfg_scale,
@@ -309,17 +317,17 @@ class GGUFModelLoader:
                     sample_steps=steps,
                     seed=seed
                 )
-                logger.info(f"txt_to_img returned: {type(result)}, length: {len(result) if result else 'None'}")
+                logger.info(f"generate_image returned: {type(result)}, length: {len(result) if result else 'None'}")
             except Exception as e:
-                logger.error(f"txt_to_img call failed: {e}")
+                logger.error(f"generate_image call failed: {e}")
                 return None
-            
+
             if not result:
-                logger.error("txt_to_img returned None")
+                logger.error("generate_image returned None")
                 return None
-                
+
             if not isinstance(result, list) or len(result) == 0:
-                logger.error(f"txt_to_img returned unexpected format: {type(result)}")
+                logger.error(f"generate_image returned unexpected format: {type(result)}")
                 return None
             
             # Get the first PIL Image from the result list
