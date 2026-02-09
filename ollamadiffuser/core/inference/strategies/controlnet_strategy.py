@@ -96,12 +96,6 @@ class ControlNetStrategy(InferenceStrategy):
             self.controlnet = self.controlnet.to(self.device)
             self._apply_memory_optimizations()
 
-            # MPS + float16: upcast VAE to float32 for numerical stability
-            # Only for SD15-based ControlNet — SDXL pipelines have built-in force_upcast
-            if device == "mps" and not is_sdxl and hasattr(self.pipeline, "vae"):
-                self.pipeline.vae = self.pipeline.vae.to(dtype=torch.float32)
-                logger.info("Upcast VAE to float32 on MPS for numerical stability")
-
             logger.info(f"ControlNet model {model_config.name} loaded on {self.device}")
             return True
         except Exception as e:
