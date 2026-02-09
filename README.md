@@ -57,7 +57,7 @@ Most models work **without any token** -- just install and go. See [Hugging Face
 - **🎛️ ControlNet Support**: Precise image generation control with 10+ control types
 - **🔄 LoRA Integration**: Dynamic LoRA loading and management
 - **🔌 MCP & OpenClaw**: Model Context Protocol server for AI assistant integration (OpenClaw, Claude Code, Cursor)
-- **🍎 Apple Silicon**: MPS dtype handling (per-model dtype, VAE upcast, NaN sanitization), GGUF Metal acceleration, `ollamadiffuser recommend` for hardware-aware model suggestions
+- **🍎 Apple Silicon**: MPS dtype handling (per-model float16/bfloat16, NaN sanitization), GGUF Metal acceleration, `ollamadiffuser recommend` for hardware-aware model suggestions
 - **📦 Smart Downloads**: `ollamadiffuser pull` downloads only diffusers pipeline files — skips root-level checkpoints, ONNX/Flax exports, and safety_checker. Saves 10–200 GB per model.
 - **📦 GGUF Support**: Memory-efficient quantized models (3GB VRAM minimum!) with CUDA and Metal acceleration
 - **🌐 Multiple Interfaces**: CLI, Python API, Web UI, and REST API

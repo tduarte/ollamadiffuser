@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.10] - 2026-02-08
+
+### 🐛 Bug Fixes
+- **Fix MPS SD15 dtype mismatch**: Removed manual VAE upcast to float32 for SD 1.5, ControlNet (SD15), and generic strategy. `StableDiffusionPipeline` has no `force_upcast` mechanism, so upcasting VAE caused `c10::Half` input vs `float` bias error (UNet outputs float16 latents to float32 VAE). Everything now stays in float16 on MPS.
+
+### ⚡ GGUF Loader Fixes
+- **Fix `txt_to_img` → `generate_image`**: Updated to match current `stable-diffusion-cpp-python` API (`txt_to_img` was renamed to `generate_image`).
+- **Fix sampler name format**: Normalize `dpmpp2m` → `dpm++2m` (and other DPM++ variants) to match library's expected format. Default sampler changed to `euler` for FLUX compatibility.
+
 ## [2.0.9] - 2026-02-07
 
 ### 📦 Smart Download Filtering
