@@ -332,13 +332,14 @@ def robust_snapshot_download(
             
             logger.info(f"Download attempt {attempt + 1}/{max_retries} with {workers} workers")
             
+            # NOTE: resume_download and local_dir_use_symlinks were removed
+            # in huggingface_hub >= 1.0. Resume is now always enabled by
+            # default and symlinks are handled automatically.
             result = snapshot_download(
                 repo_id=repo_id,
                 local_dir=local_dir,
-                local_dir_use_symlinks=False,
                 cache_dir=cache_dir,
                 max_workers=workers,
-                resume_download=True,  # Enable resume
                 etag_timeout=300 + (attempt * 60),  # Increase timeout on retries
                 force_download=force_download,
                 tqdm_class=OllamaStyleTqdm if progress_callback else None,
@@ -415,12 +416,13 @@ def robust_file_download(
             
             logger.info(f"File download attempt {attempt + 1}/{max_retries}: {filename}")
             
+            # NOTE: resume_download was removed in huggingface_hub >= 1.0.
+            # Resume is now always enabled by default.
             result = hf_hub_download(
                 repo_id=repo_id,
                 filename=filename,
                 local_dir=local_dir,
                 cache_dir=cache_dir,
-                resume_download=True,  # Enable resume
                 etag_timeout=180 + (attempt * 30)
             )
             
@@ -535,4 +537,4 @@ def check_download_integrity(local_dir: str, repo_id: str) -> bool:
         
     except Exception as e:
         logger.error(f"Error checking download integrity: {e}")
-        return False 
+        return False
