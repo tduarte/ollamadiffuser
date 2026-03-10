@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 try:
     from diffusers import HiDreamImagePipeline
     HIDREAM_AVAILABLE = True
-except ImportError:
+except (ImportError, RuntimeError):
     HIDREAM_AVAILABLE = False
 
 

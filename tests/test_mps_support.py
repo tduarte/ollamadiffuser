@@ -119,6 +119,7 @@ class TestGenericStrategyMPSVAEUpcast:
             parameters={
                 "pipeline_class": "TestPipeline",
                 "torch_dtype": "float16",
+                "vae_upcast_float32": True,
             },
         )
 

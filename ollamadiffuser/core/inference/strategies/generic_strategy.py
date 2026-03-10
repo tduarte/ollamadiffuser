@@ -111,6 +111,12 @@ class GenericPipelineStrategy(InferenceStrategy):
                 # MPS: unified memory means CPU offload adds overhead without saving memory
                 self._move_to_device(device)
 
+            # VAE upcast for models that need it (e.g. Kolors on MPS)
+            if params.get("vae_upcast_float32") and device == "mps":
+                if hasattr(self.pipeline, "vae"):
+                    self.pipeline.vae.to(dtype=torch.float32)
+                    logger.info("Upcast VAE to float32 for MPS stability")
+
             self._apply_memory_optimizations()
 
             logger.info(f"{pipeline_class_name} model {model_config.name} loaded on {self.device}")
