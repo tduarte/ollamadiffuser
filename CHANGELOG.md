@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.11] - 2026-03-10
+
+### 🐛 Bug Fixes
+- **Fix download failure with huggingface_hub >= 1.4**: Newer huggingface_hub passes a `name` kwarg to the tqdm progress bar class, which tqdm rejects with `TqdmKeyError`. Strip unknown kwargs before calling `super().__init__()`. Fixes #2.
+- **Fix HiDream strategy import**: Catch `RuntimeError` (not just `ImportError`) when diffusers fails to import `HiDreamImagePipeline` due to missing `FLAX_WEIGHTS_NAME` in newer transformers.
+
+### ⚡ Improvements
+- **Generic strategy VAE upcast**: Add opt-in `vae_upcast_float32` parameter for models like Kolors that need VAE in float32 on MPS for numerical stability.
+
+### 📋 Registry Updates
+- **pixart-sigma**: Added MPS to supported devices (0.6B model runs well with float16).
+- **flux.2-klein-4b**: Added MPS to supported devices (4B model works with bfloat16 on PyTorch 2.3+).
+- **kolors**: Added `vae_upcast_float32` parameter for MPS stability.
+
 ## [2.0.10] - 2026-02-08
 
 ### 🐛 Bug Fixes
@@ -45,8 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Non-GGUF models**: Skip `safety_checker/`, `feature_extractor/`, preview images (`.png`/`.jpg`/`.webp`), READMEs, and git metadata during `ollamadiffuser pull`. Saves ~1.2GB for SD models (safety_checker CLIP model is never loaded).
 
 ### 📋 Registry Updates
-- **pixart-sigma**: Removed MPS from supported_devices (not working on Apple Silicon)
-- **flux.2-klein-4b**: Removed MPS from supported_devices (not working on Apple Silicon)
+- **pixart-sigma**: Removed MPS from supported_devices (not working on Apple Silicon) *(re-added in v2.0.11)*
+- **flux.2-klein-4b**: Removed MPS from supported_devices (not working on Apple Silicon) *(re-added in v2.0.11)*
 - **cogview4**: min_ram_gb 16 → 24 (14GB model won't fit on 16GB Mac with OS overhead)
 - **kolors**: min_ram_gb 16 → 32 (18GB model requires 32GB Apple Silicon)
 - **hunyuan-dit**: min_ram_gb 16 → 24 (12GB model won't fit on 16GB Mac with OS overhead)

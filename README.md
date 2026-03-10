@@ -519,15 +519,15 @@ Each model type has a dedicated strategy class handling loading and generation:
 
 ```
 InferenceEngine (facade)
-  -> SD15Strategy            (512x512, float16 on MPS + VAE upcast, img2img, inpainting)
+  -> SD15Strategy            (512x512, float16 on MPS, img2img, inpainting)
   -> SDXLStrategy            (1024x1024, float16 on MPS, diffusers force_upcast, img2img, inpainting, scheduler overrides, single-file)
   -> FluxStrategy            (schnell/dev/Fill/Canny/Depth, bfloat16 on MPS, dynamic pipeline class)
   -> SD3Strategy             (1024x1024, float16 on MPS, 28 steps, guidance=3.5)
-  -> ControlNetStrategy      (SD15: VAE upcast, SDXL: diffusers force_upcast, float16 on MPS)
+  -> ControlNetStrategy      (SD15 + SDXL, float16 on MPS, SDXL uses diffusers force_upcast)
   -> VideoStrategy           (AnimateDiff, float16 on MPS, 16 frames)
   -> HiDreamStrategy         (bfloat16 on MPS, multi-prompt)
   -> GGUFStrategy            (quantized via stable-diffusion-cpp)
-  -> GenericPipelineStrategy (any diffusers pipeline via config, per-model dtype on MPS)
+  -> GenericPipelineStrategy (any diffusers pipeline via config, per-model dtype on MPS, opt-in VAE upcast)
 ```
 
 The `GenericPipelineStrategy` dynamically loads any `diffusers` pipeline class specified in the model registry, so new models can be added with zero code changes.
