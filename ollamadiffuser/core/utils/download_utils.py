@@ -290,12 +290,15 @@ def robust_snapshot_download(
             # Extract description to get filename
             desc = kwargs.get('desc', '')
             self.current_filename = desc
-            
+
             # Get file size from our pre-fetched data
             file_size = file_sizes.get(self.current_filename, 0)
             if file_size > 0:
                 kwargs['total'] = file_size
-                
+
+            # Remove kwargs that huggingface_hub passes but tqdm doesn't accept
+            kwargs.pop("name", None)
+
             super().__init__(*args, **kwargs)
             
             # Start tracking this file
