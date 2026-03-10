@@ -1,6 +1,6 @@
 ### Project Status: Active Development
 
-**Thank you for the incredible support and over 11,000 downloads!**
+**Thank you for the incredible support and over 20,000 downloads!**
 
 `ollamadiffuser` is back in **active development**. v2.0 brings a major architecture overhaul, 21 new models, MCP/OpenClaw integration, and Apple Silicon support. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
 
