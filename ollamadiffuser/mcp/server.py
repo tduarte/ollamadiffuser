@@ -166,8 +166,18 @@ def create_mcp_server():
     return mcp_server
 
 
-def main():
-    """Entry point for the MCP server (stdio transport)."""
+def main(
+    transport: str = "stdio",
+    host: str = "0.0.0.0",
+    port: int = 9000,
+):
+    """Entry point for the MCP server.
+
+    Args:
+        transport: Transport type - "stdio", "sse", or "streamable-http".
+        host: Bind address for network transports.
+        port: Port for network transports.
+    """
     if not _ensure_mcp():
         sys.exit(1)
 
@@ -177,7 +187,17 @@ def main():
     )
 
     server = create_mcp_server()
-    server.run(transport="stdio")
+
+    if transport == "stdio":
+        server.run(transport="stdio")
+    elif transport in ("sse", "streamable-http"):
+        import uvicorn
+
+        app = server.sse_app() if transport == "sse" else server.streamable_http_app()
+        uvicorn.run(app, host=host, port=port)
+    else:
+        logger.error(f"Unknown transport: {transport}. Use stdio, sse, or streamable-http.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
