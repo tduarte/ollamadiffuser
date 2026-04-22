@@ -135,12 +135,20 @@ def doctor():
 
 
 @cli.command(name="mcp")
-def mcp_cmd():
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "sse", "streamable-http"]),
+    default="stdio",
+    help="Transport type (default: stdio)",
+)
+@click.option("--host", default="0.0.0.0", help="Bind address for network transports")
+@click.option("--port", type=int, default=9000, help="Port for network transports")
+def mcp_cmd(transport, host, port):
     """Start the MCP (Model Context Protocol) server for AI assistant integration."""
     try:
         from ..mcp.server import main as mcp_main
 
-        mcp_main()
+        mcp_main(transport=transport, host=host, port=port)
     except ImportError:
         rprint("[red]MCP package not installed. Install with:[/red]")
         rprint("[yellow]  pip install 'ollamadiffuser[mcp]'[/yellow]")
