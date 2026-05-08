@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.12] - 2026-04-26
+
+### 🐛 Bug Fixes
+- **Fix Web UI 500 error on Starlette ≥ 0.29.0 (including 1.0+)**: All `templates.TemplateResponse(name, context)` calls in `ollamadiffuser/ui/web.py` were using the legacy two-positional-argument API. Starlette 0.29 made `request` the first positional argument and the old call was being interpreted as `TemplateResponse(name=<dict>, ...)`, causing `TypeError: unhashable type: 'dict'` when Jinja2 tried to look up the dict as a template name. Updated all 8 call sites to the new `TemplateResponse(request, name, context)` signature, which works on Starlette 0.29.0+. Fixes #4.
+
 ## [2.0.11] - 2026-03-10
 
 ### 🐛 Bug Fixes

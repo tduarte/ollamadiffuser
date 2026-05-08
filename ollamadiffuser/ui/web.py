@@ -356,7 +356,7 @@ def create_ui_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def home(request: Request):
         """Home page"""
-        return templates.TemplateResponse("index.html", get_template_context(request))
+        return templates.TemplateResponse(request, "index.html", get_template_context(request))
     
     @app.post("/generate")
     async def generate_image_ui(
@@ -443,7 +443,7 @@ def create_ui_app() -> FastAPI:
             "error_message": error_message,
         })
 
-        return templates.TemplateResponse("index.html", context)
+        return templates.TemplateResponse(request, "index.html", context)
 
     @app.post("/generate/img2img")
     async def generate_img2img_ui(
@@ -508,7 +508,7 @@ def create_ui_app() -> FastAPI:
             "error_message": error_message,
         })
 
-        return templates.TemplateResponse("index.html", context)
+        return templates.TemplateResponse(request, "index.html", context)
     
     @app.post("/preprocess_control_image")
     async def preprocess_control_image_ui(
@@ -562,7 +562,7 @@ def create_ui_app() -> FastAPI:
             "error_message": error_message,
         })
 
-        return templates.TemplateResponse("index.html", context)
+        return templates.TemplateResponse(request, "index.html", context)
     
     @app.post("/unload_model")
     async def unload_model_ui(request: Request):
@@ -583,7 +583,7 @@ def create_ui_app() -> FastAPI:
             "error_message": error_message
         })
         
-        return templates.TemplateResponse("index.html", context)
+        return templates.TemplateResponse(request, "index.html", context)
     
     @app.post("/load_lora")
     async def load_lora_ui(request: Request, lora_name: str = Form(...), scale: float = Form(1.0)):
@@ -606,7 +606,7 @@ def create_ui_app() -> FastAPI:
             "error_message": error_message
         })
         
-        return templates.TemplateResponse("index.html", context)
+        return templates.TemplateResponse(request, "index.html", context)
     
     @app.post("/unload_lora")
     async def unload_lora_ui(request: Request):
@@ -627,7 +627,7 @@ def create_ui_app() -> FastAPI:
             "error_message": error_message
         })
         
-        return templates.TemplateResponse("index.html", context)
+        return templates.TemplateResponse(request, "index.html", context)
     
     @app.post("/pull_lora")
     async def pull_lora_ui(request: Request, repo_id: str = Form(...), weight_name: str = Form(""), alias: str = Form("")):
@@ -656,7 +656,7 @@ def create_ui_app() -> FastAPI:
             "error_message": error_message
         })
         
-        return templates.TemplateResponse("index.html", context)
+        return templates.TemplateResponse(request, "index.html", context)
 
     @app.post("/api/controlnet/initialize")
     async def initialize_controlnet_api():
