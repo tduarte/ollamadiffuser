@@ -341,8 +341,8 @@ The GGUF support is fully integrated into:
 
 ## Getting Help
 
-- **Issues**: [GitHub Issues](https://github.com/ollamadiffuser/ollamadiffuser/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ollamadiffuser/ollamadiffuser/discussions)
+- **Issues**: [GitHub Issues](https://github.com/LocalKinAI/ollamadiffuser/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/LocalKinAI/ollamadiffuser/discussions)
 - **Documentation**: [ollamadiffuser.com](https://www.ollamadiffuser.com/)
 
 ---

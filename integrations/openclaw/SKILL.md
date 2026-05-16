@@ -4,7 +4,7 @@ display_name: OllamaDiffuser - Local AI Image Generation
 description: Generate images using locally-running AI models (Stable Diffusion, FLUX, SDXL, and 30+ models) via OllamaDiffuser
 version: 1.0.0
 author: LocalKinAI Team
-homepage: https://github.com/ollamadiffuser/ollamadiffuser
+homepage: https://github.com/LocalKinAI/ollamadiffuser
 tags:
   - image-generation
   - stable-diffusion

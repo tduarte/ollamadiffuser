@@ -49,7 +49,7 @@ setup(
     description="🎨 Ollama-like image generation model management tool with LoRA support",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/ollamadiffuser/ollamadiffuser",
+    url="https://github.com/LocalKinAI/ollamadiffuser",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",

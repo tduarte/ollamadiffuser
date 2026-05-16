@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ollamadiffuser"
-version = "2.0.12"
+version = "2.0.13"
 authors = [
     {name = "LocalKinAI Team", email = "contact@localkin.ai"}
 ]
@@ -107,12 +107,12 @@ ollamadiffuser-mcp = "ollamadiffuser.mcp.server:main"
 [project.urls]
 Homepage = "https://www.ollamadiffuser.com/"
 Website = "https://www.ollamadiffuser.com/"
-Repository = "https://github.com/ollamadiffuser/ollamadiffuser"
-Issues = "https://github.com/ollamadiffuser/ollamadiffuser/issues"
+Repository = "https://github.com/LocalKinAI/ollamadiffuser"
+Issues = "https://github.com/LocalKinAI/ollamadiffuser/issues"
 Documentation = "https://www.ollamadiffuser.com/"
-"Bug Reports" = "https://github.com/ollamadiffuser/ollamadiffuser/issues"
-"Feature Requests" = "https://github.com/ollamadiffuser/ollamadiffuser/issues"
-"Source Code" = "https://github.com/ollamadiffuser/ollamadiffuser"
+"Bug Reports" = "https://github.com/LocalKinAI/ollamadiffuser/issues"
+"Feature Requests" = "https://github.com/LocalKinAI/ollamadiffuser/issues"
+"Source Code" = "https://github.com/LocalKinAI/ollamadiffuser"
 
 [tool.setuptools]
 include-package-data = true

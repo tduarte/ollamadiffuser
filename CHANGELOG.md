@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.13] - 2026-05-08
+
+### 🐛 Bug Fixes
+- **Fix `ollamadiffuser recommend` crash on CUDA hosts**: The hardware-detection routine accessed `torch.cuda.get_device_properties(0).total_mem`, but the PyTorch attribute is `total_memory`. Every CUDA user running `recommend` hit `AttributeError`. Fixes #5.
+
+### 📚 Documentation
+- **Fix broken repository URLs across the project**: 18 references pointed to `github.com/ollamadiffuser/ollamadiffuser` (non-existent org). All updated to the correct `github.com/LocalKinAI/ollamadiffuser`:
+  - `pyproject.toml` `[project.urls]` (5 keys: Repository, Issues, "Bug Reports", "Feature Requests", "Source Code") — PyPI project page links now resolve.
+  - `setup.py` `url=`, `ollamadiffuser/__init__.py` `__repository__`
+  - `README.md`, `GGUF_GUIDE.md`, `PUBLISHING.md` (Docker GHCR path), `integrations/openclaw/SKILL.md`
+- **Enable GitHub Discussions on the repo** so the "Discussions" links in README/GGUF_GUIDE actually resolve instead of 404'ing. Fixes #6.
+
 ## [2.0.12] - 2026-04-26
 
 ### 🐛 Bug Fixes

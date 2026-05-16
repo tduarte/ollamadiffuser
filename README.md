@@ -128,7 +128,7 @@ ollamadiffuser run flux.1-dev-gguf-q4ks
 ### Option 2: Development Installation
 ```bash
 # Clone the repository
-git clone https://github.com/ollamadiffuser/ollamadiffuser.git
+git clone https://github.com/LocalKinAI/ollamadiffuser.git
 cd ollamadiffuser
 
 # Install dependencies
@@ -789,10 +789,10 @@ We welcome contributions! Please check the GitHub repository for contribution gu
 
 ### Quick Actions
 
-- **🐛 [Report a Bug](https://github.com/ollamadiffuser/ollamadiffuser/issues)** - Found an issue? Let us know
-- **💡 [Feature Request](https://github.com/ollamadiffuser/ollamadiffuser/issues)** - Have an idea? Share it with us  
-- **💬 [Join Discussions](https://github.com/ollamadiffuser/ollamadiffuser/discussions)** - Community discussion
-- **⭐ [Star on GitHub](https://github.com/ollamadiffuser/ollamadiffuser)** - Show your support
+- **🐛 [Report a Bug](https://github.com/LocalKinAI/ollamadiffuser/issues)** - Found an issue? Let us know
+- **💡 [Feature Request](https://github.com/LocalKinAI/ollamadiffuser/issues)** - Have an idea? Share it with us  
+- **💬 [Join Discussions](https://github.com/LocalKinAI/ollamadiffuser/discussions)** - Community discussion
+- **⭐ [Star on GitHub](https://github.com/LocalKinAI/ollamadiffuser)** - Show your support
 
 ### Community Driven
 
@@ -827,8 +827,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/ollamadiffuser/ollamadiffuser/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ollamadiffuser/ollamadiffuser/discussions)
+- **Issues**: [GitHub Issues](https://github.com/LocalKinAI/ollamadiffuser/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/LocalKinAI/ollamadiffuser/discussions)
 
 ---
 

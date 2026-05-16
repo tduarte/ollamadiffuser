@@ -109,8 +109,8 @@ docker push yourusername/ollamadiffuser:v1.0.0
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 
 # Tag and push
-docker tag ollamadiffuser:latest ghcr.io/ollamadiffuser/ollamadiffuser:latest
-docker push ghcr.io/ollamadiffuser/ollamadiffuser:latest
+docker tag ollamadiffuser:latest ghcr.io/localkinai/ollamadiffuser:latest
+docker push ghcr.io/localkinai/ollamadiffuser:latest
 ```
 
 ## 📚 Documentation Publishing
