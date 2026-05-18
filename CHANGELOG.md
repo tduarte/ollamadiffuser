@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.16] - 2026-05-18
+
+### 🍎 MLX Backend Phase 2 (#7)
+
+`MLXStrategy` now routes **all five** mflux model families. Phase 1
+shipped just FLUX.1 (schnell / dev); this release adds FLUX.1 Kontext,
+FLUX.2-klein, Z-Image, and Qwen-Image. Seven new registry entries.
+
+#### Strategy changes
+
+`ollamadiffuser/core/inference/strategies/mlx_strategy.py`
+- `SUPPORTED_MLX_VARIANTS` expanded to
+  `{flux1, flux1-kontext, flux2, z_image, qwen-image}`.
+- Renamed `_resolve_model_class` → `_resolve_model_and_config`. Now
+  returns `(ModelClass, mflux_model_config)` so the unified load path
+  is `cls(quantize=..., model_config=mc)` across all families.
+  (Only `Flux1` has the `from_name()` factory; the other four require
+  `ModelConfig.<factory>()`.)
+- New `_variant` instance attribute caches which variant was loaded —
+  enables per-call capability checks in `generate()`.
+- `generate()` now **filters kwargs against the bound `generate_image`
+  signature**. This matters because `Flux2Klein.generate_image()` has
+  no `negative_prompt` parameter; the strategy detects this via
+  `inspect.signature()` and drops unsupported kwargs with a debug log.
+- `generate()` enforces `flux1-kontext` requires an `image=` kwarg —
+  fails loud with `ValueError` rather than letting mflux crash mid-
+  pipeline.
+
+#### New registry entries
+
+| Name | Variant / mflux model | License | Disk (Q8) | Rec. VRAM | Fits |
+|---|---|---|---|---|---|
+| `flux.1-kontext-dev-mlx` | flux1-kontext / dev | Non-Commercial | ~14 GB | 20 GB | M1 32GB |
+| `flux.2-klein-4b-mlx` | flux2 / klein-4b | Apache 2.0 | ~7 GB | 12 GB | M4 16GB ✅ |
+| `flux.2-klein-9b-mlx` | flux2 / klein-9b | Apache 2.0 | ~13 GB | 20 GB | M1 32GB |
+| `z-image-turbo-mlx` | z_image / z-image-turbo | Apache 2.0 | ~8 GB | 12 GB | M4 16GB ✅ |
+| `qwen-image-mlx` | qwen-image / qwen-image | Apache 2.0 | ~22 GB | 24 GB | M1 32GB |
+| `qwen-image-edit-mlx` | qwen-image / qwen-image-edit | Apache 2.0 | ~22 GB | 24 GB | M1 32GB |
+
+Plus the three from Phase 1 (v2.0.15): `flux.1-schnell-mlx`,
+`flux.1-schnell-mlx-q4`, `flux.1-dev-mlx`.
+
+#### Tests
+
+13 new tests in `tests/test_mlx_strategy.py`:
+- Variant resolution: 11 cases covering each family + bad-name rejection
+  for each.
+- `test_generate_filters_kwargs_for_variants_without_negative_prompt` —
+  asserts the inspect-signature-based filter actually drops
+  unsupported kwargs.
+- `test_kontext_without_image_raises` — asserts the
+  image-required guard.
+- Existing 16 tests rewritten against the new `_resolve_model_and_config`
+  API and a new stub helper (`_stub_resolution`) that uses real
+  functions so `inspect.signature()` works.
+
+**Total: 107 passed, 8 skipped.**
+
+#### Phase 3 — still open
+
+[`mlx-community/HiDream-O1-Image-Dev-mlx-bf16`](https://huggingface.co/mlx-community/HiDream-O1-Image-Dev-mlx-bf16)
+ships its own loader (not on mflux). Either a separate
+`HiDreamO1MLXStrategy` or an `mlx_backend: "mflux" | "mlx-community"`
+abstraction on `MLXStrategy` will be needed. ~3-4 days of work.
+
 ## [2.0.15] - 2026-05-18
 
 ### 🍎 MLX Backend (Phase 1 of #7)

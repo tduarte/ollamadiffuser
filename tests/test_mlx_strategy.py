@@ -1,4 +1,4 @@
-"""Tests for the MLX inference strategy (issue #7).
+"""Tests for the MLX inference strategy (issue #7, Phases 1 + 2).
 
 These tests run on any platform — when not on Apple Silicon they
 exercise the platform-check refusal path; when on Apple Silicon they
@@ -6,7 +6,6 @@ mock the mflux model class so no weights need to download.
 """
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,30 +41,75 @@ def _make_config(**overrides) -> ModelConfig:
         },
     }
     base.update(overrides)
-    # ModelConfig accepts arbitrary kwargs depending on the codebase's settings
-    # module; tolerate either dataclass or simple-namespace shapes.
     try:
         return ModelConfig(**base)
     except TypeError:
-        # Fall back to a generic namespace if ModelConfig is restrictive.
         from types import SimpleNamespace
         return SimpleNamespace(**base)
 
 
-def _stub_flux_class():
-    """Build a MagicMock that acts like mflux's Flux1 class.
+def _stub_resolution(*, supports_negative=True):
+    """Return (cls_mock, instance_mock, mflux_config_mock).
 
-    Returns (cls_mock, instance_mock).
+    ``instance_mock.generate_image`` is a plain function so that
+    ``inspect.signature()`` returns the exact parameters the strategy
+    is allowed to forward — MLXStrategy filters kwargs against that
+    signature. Set ``supports_negative=False`` to simulate a class
+    like Flux2Klein that has no ``negative_prompt`` parameter.
+    Call records are kept on ``instance_mock._call_kwargs`` (a list of
+    dicts) — assert against the last entry.
     """
-    instance = MagicMock(name="Flux1Instance")
-    # generate_image returns an object whose .image attribute is a PIL.Image
     fake_pil = Image.new("RGB", (64, 64), color=(0, 128, 255))
-    generated = MagicMock(name="GeneratedImage", image=fake_pil)
-    instance.generate_image.return_value = generated
+    generated_obj = MagicMock(name="GeneratedImage", image=fake_pil)
 
-    cls = MagicMock(name="Flux1Class")
-    cls.from_name.return_value = instance
-    return cls, instance
+    call_log: list = []
+
+    if supports_negative:
+        def fake_generate_image(
+            seed, prompt, num_inference_steps=4, height=1024,
+            width=1024, guidance=4.0, image_path=None,
+            image_strength=None, scheduler="linear",
+            negative_prompt=None,
+        ):
+            call_log.append({
+                "seed": seed,
+                "prompt": prompt,
+                "num_inference_steps": num_inference_steps,
+                "height": height,
+                "width": width,
+                "guidance": guidance,
+                "image_path": image_path,
+                "image_strength": image_strength,
+                "scheduler": scheduler,
+                "negative_prompt": negative_prompt,
+            })
+            return generated_obj
+    else:
+        def fake_generate_image(
+            seed, prompt, num_inference_steps=4, height=1024,
+            width=1024, guidance=1.0, image_path=None,
+            image_strength=None, scheduler="flow_match_euler_discrete",
+        ):
+            call_log.append({
+                "seed": seed,
+                "prompt": prompt,
+                "num_inference_steps": num_inference_steps,
+                "height": height,
+                "width": width,
+                "guidance": guidance,
+                "image_path": image_path,
+                "image_strength": image_strength,
+                "scheduler": scheduler,
+            })
+            return generated_obj
+
+    instance = MagicMock(name="MfluxInstance")
+    instance.generate_image = fake_generate_image
+    instance._call_kwargs = call_log  # for test assertions
+
+    cls = MagicMock(name="MfluxClass", return_value=instance)
+    mflux_config = MagicMock(name="MfluxModelConfig")
+    return cls, instance, mflux_config
 
 
 # --------------------------------------------------------------------------
@@ -78,7 +122,10 @@ class TestDispatch:
         assert isinstance(strategy, MLXStrategy)
 
     def test_supported_variants_constant(self):
-        assert "flux1" in SUPPORTED_MLX_VARIANTS
+        # Phase 1 + Phase 2 — all five variants.
+        assert SUPPORTED_MLX_VARIANTS == frozenset({
+            "flux1", "flux1-kontext", "flux2", "z_image", "qwen-image",
+        })
 
     def test_is_apple_silicon_returns_bool(self):
         assert isinstance(is_apple_silicon(), bool)
@@ -123,9 +170,60 @@ class TestConfigValidation:
         config = _make_config(parameters={
             "mlx_variant": "flux1",
             "mlx_model_name": "schnell",
-            "quantize": 3,  # neither None, 4, nor 8
+            "quantize": 3,
         })
         assert s.load(config, device="mps") is False
+
+
+# --------------------------------------------------------------------------
+# Resolution per variant (no actual mflux call — verifies dispatch logic)
+# --------------------------------------------------------------------------
+
+@pytest.mark.skipif(not is_apple_silicon(), reason="MLX only runs on Apple Silicon")
+class TestVariantResolution:
+    def test_flux1_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1", "schnell")
+        assert cls.__name__ == "Flux1"
+
+    def test_flux1_kontext_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1-kontext", "dev")
+        assert cls.__name__ == "Flux1Kontext"
+
+    def test_flux1_kontext_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="flux1-kontext"):
+            MLXStrategy._resolve_model_and_config("flux1-kontext", "bogus")
+
+    def test_flux2_klein_4b_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux2", "klein-4b")
+        assert cls.__name__ == "Flux2Klein"
+
+    def test_flux2_klein_9b_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux2", "klein-9b")
+        assert cls.__name__ == "Flux2Klein"
+
+    def test_flux2_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="flux2"):
+            MLXStrategy._resolve_model_and_config("flux2", "klein-99b")
+
+    def test_z_image_turbo_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("z_image", "z-image-turbo")
+        assert cls.__name__ == "ZImage"
+
+    def test_z_image_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="z_image"):
+            MLXStrategy._resolve_model_and_config("z_image", "z-image-pro")
+
+    def test_qwen_image_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("qwen-image", "qwen-image")
+        assert cls.__name__ == "QwenImage"
+
+    def test_qwen_image_edit_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("qwen-image", "qwen-image-edit")
+        assert cls.__name__ == "QwenImage"
+
+    def test_qwen_image_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="qwen-image"):
+            MLXStrategy._resolve_model_and_config("qwen-image", "qwen-bogus")
 
 
 # --------------------------------------------------------------------------
@@ -134,28 +232,49 @@ class TestConfigValidation:
 
 @pytest.mark.skipif(not is_apple_silicon(), reason="MLX only runs on Apple Silicon")
 class TestLoadAndGenerate:
-    def test_load_calls_from_name_with_correct_args(self):
-        cls_mock, _ = _stub_flux_class()
+    def test_load_calls_class_constructor_with_quantize_and_config(self):
+        cls_mock, _, mflux_config_mock = _stub_resolution()
         s = MLXStrategy()
-        with patch.object(MLXStrategy, "_resolve_model_class", return_value=cls_mock):
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
             ok = s.load(_make_config(), device="mps")
         assert ok is True
-        cls_mock.from_name.assert_called_once_with("schnell", quantize=8)
+        cls_mock.assert_called_once_with(quantize=8, model_config=mflux_config_mock)
         assert s.is_loaded
         assert s.device == "mps"
+        assert s._variant == "flux1"
 
     def test_load_reports_failure_on_mflux_import_error(self):
         s = MLXStrategy()
+
         def raise_import(*a, **kw):
             raise ImportError("mflux missing")
-        with patch.object(MLXStrategy, "_resolve_model_class", side_effect=raise_import):
+        with patch.object(
+            MLXStrategy, "_resolve_model_and_config", side_effect=raise_import
+        ):
             assert s.load(_make_config(), device="mps") is False
         assert s.is_loaded is False
 
-    def test_generate_forwards_params_and_returns_pil(self):
-        cls_mock, inst_mock = _stub_flux_class()
+    def test_load_reports_failure_on_bad_model_name(self):
         s = MLXStrategy()
-        with patch.object(MLXStrategy, "_resolve_model_class", return_value=cls_mock):
+        config = _make_config(parameters={
+            "mlx_variant": "flux2",
+            "mlx_model_name": "klein-bogus",
+        })
+        # Don't mock — let resolution actually raise ValueError.
+        assert s.load(config, device="mps") is False
+
+    def test_generate_forwards_params_and_returns_pil(self):
+        cls_mock, inst_mock, mflux_config_mock = _stub_resolution()
+        s = MLXStrategy()
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
             s.load(_make_config(), device="mps")
 
         out = s.generate(
@@ -167,8 +286,8 @@ class TestLoadAndGenerate:
             seed=42,
         )
         assert isinstance(out, Image.Image)
-        inst_mock.generate_image.assert_called_once()
-        called = inst_mock.generate_image.call_args.kwargs
+        assert len(inst_mock._call_kwargs) == 1
+        called = inst_mock._call_kwargs[-1]
         assert called["prompt"] == "A dog"
         assert called["seed"] == 42
         assert called["num_inference_steps"] == 4
@@ -176,26 +295,60 @@ class TestLoadAndGenerate:
         assert called["height"] == 512
         assert called["width"] == 512
 
-    def test_generate_uses_registry_defaults_when_not_overridden(self):
-        cls_mock, inst_mock = _stub_flux_class()
+    def test_generate_filters_kwargs_for_variants_without_negative_prompt(self):
+        """Flux2Klein has no negative_prompt — strategy must not pass it."""
+        cls_mock, inst_mock, mflux_config_mock = _stub_resolution(supports_negative=False)
         s = MLXStrategy()
-        with patch.object(MLXStrategy, "_resolve_model_class", return_value=cls_mock):
-            s.load(_make_config(), device="mps")
+        config = _make_config(parameters={
+            "mlx_variant": "flux2",
+            "mlx_model_name": "klein-4b",
+            "quantize": 8,
+        })
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
+            s.load(config, device="mps")
 
-        s.generate(prompt="hi", seed=1)
-        called = inst_mock.generate_image.call_args.kwargs
-        # Registry says num_inference_steps=4, guidance_scale=0.0
-        assert called["num_inference_steps"] == 4
-        assert called["guidance"] == 0.0
+        # If the strategy fails to filter, this raises TypeError because
+        # our fake fn has no `negative_prompt` parameter.
+        s.generate(prompt="hi", negative_prompt="ugly", seed=1)
+        called = inst_mock._call_kwargs[-1]
+        # And the call was actually made (no exception).
+        assert called["prompt"] == "hi"
+
+    def test_kontext_without_image_raises(self):
+        """flux1-kontext is an image-editor — must reject if no image given."""
+        cls_mock, _, mflux_config_mock = _stub_resolution()
+        s = MLXStrategy()
+        config = _make_config(parameters={
+            "mlx_variant": "flux1-kontext",
+            "mlx_model_name": "dev",
+            "quantize": 8,
+        })
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
+            s.load(config, device="mps")
+
+        with pytest.raises(ValueError, match="image-editing"):
+            s.generate(prompt="make it sunset")  # no image=
 
     def test_generate_without_seed_gets_random_int(self):
-        cls_mock, inst_mock = _stub_flux_class()
+        cls_mock, inst_mock, mflux_config_mock = _stub_resolution()
         s = MLXStrategy()
-        with patch.object(MLXStrategy, "_resolve_model_class", return_value=cls_mock):
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
             s.load(_make_config(), device="mps")
 
-        s.generate(prompt="hi")  # no seed
-        called = inst_mock.generate_image.call_args.kwargs
+        s.generate(prompt="hi")
+        called = inst_mock._call_kwargs[-1]
         assert isinstance(called["seed"], int)
         assert 0 <= called["seed"] < 2**31
 
@@ -204,16 +357,22 @@ class TestLoadAndGenerate:
         with pytest.raises(RuntimeError, match="Model not loaded"):
             s.generate(prompt="hi")
 
-    def test_unload_clears_state(self):
-        cls_mock, _ = _stub_flux_class()
+    def test_unload_clears_state_and_variant(self):
+        cls_mock, _, mflux_config_mock = _stub_resolution()
         s = MLXStrategy()
-        with patch.object(MLXStrategy, "_resolve_model_class", return_value=cls_mock):
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
             s.load(_make_config(), device="mps")
         assert s.is_loaded
+        assert s._variant == "flux1"
         s.unload()
         assert s.is_loaded is False
         assert s._mlx_model is None
         assert s.pipeline is None
+        assert s._variant is None
 
 
 # --------------------------------------------------------------------------
@@ -223,19 +382,26 @@ class TestLoadAndGenerate:
 @pytest.mark.skipif(not is_apple_silicon(), reason="MLX only runs on Apple Silicon")
 class TestUnsupported:
     def test_runtime_lora_returns_false_with_log(self, caplog):
-        cls_mock, _ = _stub_flux_class()
+        cls_mock, _, mflux_config_mock = _stub_resolution()
         s = MLXStrategy()
-        with patch.object(MLXStrategy, "_resolve_model_class", return_value=cls_mock):
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
             s.load(_make_config(), device="mps")
-
         with caplog.at_level("ERROR"):
             assert s.load_lora_runtime("some/repo") is False
         assert any("not supported" in r.message.lower() for r in caplog.records)
 
     def test_get_info_reports_backend_mlx(self):
-        cls_mock, _ = _stub_flux_class()
+        cls_mock, _, mflux_config_mock = _stub_resolution()
         s = MLXStrategy()
-        with patch.object(MLXStrategy, "_resolve_model_class", return_value=cls_mock):
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
             s.load(_make_config(), device="mps")
         info = s.get_info()
         assert info["backend"] == "mlx"

@@ -198,6 +198,168 @@ class ModelRegistry:
                 }
             },
 
+            "flux.1-kontext-dev-mlx": {
+                "repo_id": "black-forest-labs/FLUX.1-Kontext-dev",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1-kontext",
+                    "mlx_model_name": "dev",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 2.5
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 20,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 14,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native image editing via mflux. 12B Kontext model at 8-bit MLX quant. Requires an input image — pass image=<PIL.Image|path> to generate(). Gated license."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
+            "flux.2-klein-4b-mlx": {
+                "repo_id": "black-forest-labs/FLUX.2-klein-4B",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux2",
+                    "mlx_model_name": "klein-4b",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 6,
+                    "recommended_vram_gb": 12,
+                    "min_ram_gb": 16,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 7,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native FLUX.2 4B at 8-bit MLX. Fits Mac Mini M4 16GB UMA. Apache 2.0 — commercial-friendly."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
+            "flux.2-klein-9b-mlx": {
+                "repo_id": "black-forest-labs/FLUX.2-klein-9B",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux2",
+                    "mlx_model_name": "klein-9b",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 20,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 13,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native FLUX.2 9B at 8-bit MLX. Fits Mac Pro M1 32GB; tight on M4 16GB. Apache 2.0."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
+            "z-image-turbo-mlx": {
+                "repo_id": "Tongyi-MAI/Z-Image-Turbo",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "z_image",
+                    "mlx_model_name": "z-image-turbo",
+                    "quantize": 8,
+                    "num_inference_steps": 8,
+                    "guidance_scale": 4.0
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 6,
+                    "recommended_vram_gb": 12,
+                    "min_ram_gb": 16,
+                    "recommended_ram_gb": 24,
+                    "disk_space_gb": 8,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native Z-Image-Turbo via mflux. 6B parameters, 8-step DMD, 8-bit MLX. Fits Mac Mini M4 16GB. Apache 2.0."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
+            "qwen-image-mlx": {
+                "repo_id": "Qwen/Qwen-Image",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "qwen-image",
+                    "mlx_model_name": "qwen-image",
+                    "quantize": 8,
+                    "num_inference_steps": 30,
+                    "guidance_scale": 4.0
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 18,
+                    "recommended_vram_gb": 24,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 64,
+                    "disk_space_gb": 22,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "20B Qwen-Image at 8-bit MLX. Requires Mac Pro M1 32GB+ — too large for M4 16GB. Apache 2.0."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
+            "qwen-image-edit-mlx": {
+                "repo_id": "Qwen/Qwen-Image-Edit",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "qwen-image",
+                    "mlx_model_name": "qwen-image-edit",
+                    "quantize": 8,
+                    "num_inference_steps": 30,
+                    "guidance_scale": 4.0
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 18,
+                    "recommended_vram_gb": 24,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 64,
+                    "disk_space_gb": 22,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native Qwen-Image-Edit (20B) at 8-bit MLX. Image-editing companion to qwen-image-mlx. M1 32GB+ only. Apache 2.0."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
             "chroma1-hd": {
                 "repo_id": "lodestones/Chroma1-HD",
                 "model_type": "generic",

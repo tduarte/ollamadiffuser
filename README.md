@@ -4,9 +4,24 @@
 
 `ollamadiffuser` is in **active development**. v2.0 brought a major architecture overhaul (strategy pattern, MCP/OpenClaw integration, Apple Silicon support, GGUF). The current line (v2.0.14) keeps adding new models on top of that foundation — see [What's New](#-whats-new-in-v2014) below. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
 
-## 🆕 What's New in v2.0.15
+## 🆕 What's New in v2.0.16
 
-- **🍎 MLX backend (Phase 1)** — new `MLXStrategy` routes FLUX.1 schnell / dev through [mflux](https://github.com/filipstrand/mflux) for **Apple-Silicon-native inference**. Typically **2-3× faster** than the PyTorch + MPS path. Three new registry entries: `flux.1-schnell-mlx`, `flux.1-schnell-mlx-q4` (Mac Mini M4 16GB friendly), `flux.1-dev-mlx`. Install with `pip install 'ollamadiffuser[mlx]'`. Tracks [#7](https://github.com/LocalKinAI/ollamadiffuser/issues/7).
+- **🍎 MLX backend Phase 2** — `MLXStrategy` now routes **all five** mflux model families. Seven new registry entries on top of Phase 1's three (10 MLX entries total):
+
+  | Entry | Variant | Quant | License | Fits M4 16GB? |
+  |---|---|---|---|---|
+  | `flux.1-kontext-dev-mlx` | FLUX.1 Kontext | 8-bit | Non-Commercial | ❌ |
+  | `flux.2-klein-4b-mlx` | FLUX.2 Klein 4B | 8-bit | Apache 2.0 | ✅ |
+  | `flux.2-klein-9b-mlx` | FLUX.2 Klein 9B | 8-bit | Apache 2.0 | ❌ |
+  | `z-image-turbo-mlx` | Z-Image Turbo (6B) | 8-bit | Apache 2.0 | ✅ |
+  | `qwen-image-mlx` | Qwen-Image (20B) | 8-bit | Apache 2.0 | ❌ |
+  | `qwen-image-edit-mlx` | Qwen-Image-Edit | 8-bit | Apache 2.0 | ❌ |
+
+  Tracks [#7](https://github.com/LocalKinAI/ollamadiffuser/issues/7) — Phase 3 (HiDream-O1) still open.
+
+## What was added in v2.0.15
+
+- **🍎 MLX backend Phase 1** — new `MLXStrategy` routes FLUX.1 schnell / dev through [mflux](https://github.com/filipstrand/mflux) for **Apple-Silicon-native inference**. Typically **2-3× faster** than the PyTorch + MPS path. Install with `pip install 'ollamadiffuser[mlx]'`.
 
 ## What was added in v2.0.14
 
