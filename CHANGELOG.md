@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.17] - 2026-05-18
+
+### 🍎 MLX Backend Phase 2.5 — FLUX.1 family completion (#7)
+
+Four new mflux variants wired (`flux1-fill`, `flux1-redux`, `flux1-depth`,
+`flux1-controlnet`), bringing the MLX-supported FLUX.1 family to feature
+parity with the PyTorch path. Five new registry entries; 14 MLX entries
+in the registry now.
+
+#### Strategy changes
+
+`ollamadiffuser/core/inference/strategies/mlx_strategy.py`
+- `SUPPORTED_MLX_VARIANTS` now nine entries (was five): adds
+  `flux1-fill`, `flux1-redux`, `flux1-depth`, `flux1-controlnet`.
+- New `_VARIANT_REQUIRED_INPUTS` map encodes per-variant required
+  kwargs. Used by `generate()` for early validation:
+
+  | Variant | Required kwargs |
+  |---|---|
+  | `flux1-kontext` | `image` |
+  | `flux1-fill` | `image`, `mask_image` |
+  | `flux1-redux` | `redux_images` |
+  | `flux1-depth` | `image` |
+  | `flux1-controlnet` | `control_image` |
+
+- `generate()` accepts new kwargs (`mask_image`, `depth_image`,
+  `control_image`, `redux_images`, `controlnet_strength`,
+  `redux_image_strengths`) and materializes PIL Images / paths
+  → mflux's `*_path` parameters. The existing kwarg-filter passes
+  only what the variant's `generate_image` accepts.
+- New `_materialize_image_path_list` helper accepts a scalar or list of
+  images for Redux's `redux_image_paths`.
+
+#### New registry entries (all gated by `[mlx]` extra)
+
+| Name | mflux variant / model | Required kwargs |
+|---|---|---|
+| `flux.1-fill-dev-mlx` | `flux1-fill` / `dev` | `image`, `mask_image` |
+| `flux.1-redux-dev-mlx` | `flux1-redux` / `dev` | `redux_images` |
+| `flux.1-depth-dev-mlx` | `flux1-depth` / `dev` | `image` |
+| `flux.1-controlnet-canny-mlx` | `flux1-controlnet` / `canny` | `control_image` |
+| `flux.1-controlnet-upscaler-mlx` | `flux1-controlnet` / `upscaler` | `control_image` |
+
+All five inherit FLUX.1 Non-Commercial license. Disk ~14-16 GB Q8.
+
+#### Why this batch and not Phase 3 (HiDream-O1)
+
+Investigated `mlx-community/HiDream-O1-Image-Dev-mlx-bf16` and the
+upstream repo — the only Python entry point is a CLI script
+(`scripts/hidream_o1/generate_hidream_o1_mlx.py`) plus 3 custom
+helper modules. No clean Python API, no PyPI package. Clean
+integration would require either vendoring those scripts into
+this repo (maintenance burden) or shelling out via subprocess
+(ugly). Deferred; tracked in #7.
+
+#### Tests
+
+17 new tests in `tests/test_mlx_strategy.py`:
+- 11 variant-resolution tests (each new variant + each variant's
+  bad-name rejection).
+- `test_variant_required_input_enforcement` — parametrized across
+  the four new variants + Fill's two-required-kwarg case; asserts
+  `ValueError` with "requires kwargs" message.
+- `test_redux_accepts_scalar_or_list` — covers the new
+  `_materialize_image_path_list` helper's scalar/list/None paths.
+- Existing Kontext test updated to match new "requires kwargs"
+  error message.
+
+**Total: 124 passed, 8 skipped.**
+
+#### Phase 3 — still open
+
+HiDream-O1 via `mlx-community` still needs an inference-API wrapper.
+Tracking [#7](https://github.com/LocalKinAI/ollamadiffuser/issues/7).
+
 ## [2.0.16] - 2026-05-18
 
 ### 🍎 MLX Backend Phase 2 (#7)

@@ -360,6 +360,141 @@ class ModelRegistry:
                 }
             },
 
+            "flux.1-fill-dev-mlx": {
+                "repo_id": "black-forest-labs/FLUX.1-Fill-dev",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1-fill",
+                    "mlx_model_name": "dev",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 20,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 14,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native FLUX.1 Fill (inpaint/outpaint) at 8-bit MLX. Requires image= AND mask_image= kwargs in generate(). Gated license."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
+            "flux.1-redux-dev-mlx": {
+                "repo_id": "black-forest-labs/FLUX.1-Redux-dev",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1-redux",
+                    "mlx_model_name": "dev",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 2.5
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 20,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 14,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native FLUX.1 Redux at 8-bit MLX. Image-variation model: pass redux_images=[<PIL|path>, ...] to generate(). Gated license."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
+            "flux.1-depth-dev-mlx": {
+                "repo_id": "black-forest-labs/FLUX.1-Depth-dev",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1-depth",
+                    "mlx_model_name": "dev",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 10.0
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 20,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 14,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native FLUX.1 Depth at 8-bit MLX. Pass image=<source> for depth-conditioned generation; optional depth_image= for precomputed depth map. Gated license."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
+            "flux.1-controlnet-canny-mlx": {
+                "repo_id": "InstantX/FLUX.1-dev-Controlnet-Canny",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1-controlnet",
+                    "mlx_model_name": "canny",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 20,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 16,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native FLUX.1 + InstantX Canny ControlNet at 8-bit MLX. Pass control_image=<canny edge map> and optionally controlnet_strength=. Underlying FLUX.1-dev is gated."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
+            "flux.1-controlnet-upscaler-mlx": {
+                "repo_id": "jasperai/Flux.1-dev-Controlnet-Upscaler",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1-controlnet",
+                    "mlx_model_name": "upscaler",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 20,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 16,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native FLUX.1 + Jasper AI Upscaler ControlNet at 8-bit MLX. Pass control_image=<low-res source>. Great for AI-upscaling photos. Underlying FLUX.1-dev is gated."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
             "chroma1-hd": {
                 "repo_id": "lodestones/Chroma1-HD",
                 "model_type": "generic",

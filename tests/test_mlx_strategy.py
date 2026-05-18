@@ -122,9 +122,11 @@ class TestDispatch:
         assert isinstance(strategy, MLXStrategy)
 
     def test_supported_variants_constant(self):
-        # Phase 1 + Phase 2 — all five variants.
+        # Phase 1 + Phase 2 + Phase 2.5 — nine variants total.
         assert SUPPORTED_MLX_VARIANTS == frozenset({
-            "flux1", "flux1-kontext", "flux2", "z_image", "qwen-image",
+            "flux1", "flux1-kontext",
+            "flux1-fill", "flux1-redux", "flux1-depth", "flux1-controlnet",
+            "flux2", "z_image", "qwen-image",
         })
 
     def test_is_apple_silicon_returns_bool(self):
@@ -224,6 +226,54 @@ class TestVariantResolution:
     def test_qwen_image_rejects_bad_name(self):
         with pytest.raises(ValueError, match="qwen-image"):
             MLXStrategy._resolve_model_and_config("qwen-image", "qwen-bogus")
+
+    # --- Phase 2.5: additional FLUX.1 family variants ---
+
+    def test_flux1_fill_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1-fill", "dev")
+        assert cls.__name__ == "Flux1Fill"
+
+    def test_flux1_fill_catvton_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1-fill", "catvton")
+        assert cls.__name__ == "Flux1Fill"
+
+    def test_flux1_fill_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="flux1-fill"):
+            MLXStrategy._resolve_model_and_config("flux1-fill", "bogus")
+
+    def test_flux1_redux_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1-redux", "dev")
+        assert cls.__name__ == "Flux1Redux"
+
+    def test_flux1_redux_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="flux1-redux"):
+            MLXStrategy._resolve_model_and_config("flux1-redux", "bogus")
+
+    def test_flux1_depth_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1-depth", "dev")
+        assert cls.__name__ == "Flux1Depth"
+
+    def test_flux1_depth_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="flux1-depth"):
+            MLXStrategy._resolve_model_and_config("flux1-depth", "bogus")
+
+    def test_flux1_controlnet_canny_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1-controlnet", "canny")
+        assert cls.__name__ == "Flux1Controlnet"
+
+    def test_flux1_controlnet_upscaler_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config("flux1-controlnet", "upscaler")
+        assert cls.__name__ == "Flux1Controlnet"
+
+    def test_flux1_controlnet_canny_schnell_resolves(self):
+        cls, _ = MLXStrategy._resolve_model_and_config(
+            "flux1-controlnet", "canny-schnell"
+        )
+        assert cls.__name__ == "Flux1Controlnet"
+
+    def test_flux1_controlnet_rejects_bad_name(self):
+        with pytest.raises(ValueError, match="flux1-controlnet"):
+            MLXStrategy._resolve_model_and_config("flux1-controlnet", "pose")
 
 
 # --------------------------------------------------------------------------
@@ -334,8 +384,53 @@ class TestLoadAndGenerate:
         ):
             s.load(config, device="mps")
 
-        with pytest.raises(ValueError, match="image-editing"):
+        with pytest.raises(ValueError, match="requires kwargs"):
             s.generate(prompt="make it sunset")  # no image=
+
+    @pytest.mark.parametrize("variant,model_name,missing_kwargs,passed_kwargs", [
+        ("flux1-fill", "dev", ["image", "mask_image"], {}),
+        ("flux1-fill", "dev", ["mask_image"], {"image": "/tmp/x.png"}),
+        ("flux1-redux", "dev", ["redux_images"], {}),
+        ("flux1-depth", "dev", ["image"], {}),
+        ("flux1-controlnet", "canny", ["control_image"], {}),
+    ])
+    def test_variant_required_input_enforcement(
+        self, variant, model_name, missing_kwargs, passed_kwargs
+    ):
+        """Each variant's required-input contract is enforced before mflux call."""
+        cls_mock, _, mflux_config_mock = _stub_resolution()
+        s = MLXStrategy()
+        config = _make_config(parameters={
+            "mlx_variant": variant,
+            "mlx_model_name": model_name,
+            "quantize": 8,
+        })
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
+            s.load(config, device="mps")
+
+        with pytest.raises(ValueError, match="requires kwargs"):
+            s.generate(prompt="x", **passed_kwargs)
+
+    def test_redux_accepts_scalar_or_list(self):
+        """redux_images may be a single PIL/path or a list of them."""
+        from ollamadiffuser.core.inference.strategies.mlx_strategy import (
+            MLXStrategy as _S,
+        )
+        # Scalar PIL → list of 1
+        pil = Image.new("RGB", (8, 8))
+        out = _S._materialize_image_path_list(pil)
+        assert isinstance(out, list) and len(out) == 1
+
+        # List of PIL → list of paths
+        out2 = _S._materialize_image_path_list([pil, pil])
+        assert isinstance(out2, list) and len(out2) == 2
+
+        # None → None
+        assert _S._materialize_image_path_list(None) is None
 
     def test_generate_without_seed_gets_random_int(self):
         cls_mock, inst_mock, mflux_config_mock = _stub_resolution()

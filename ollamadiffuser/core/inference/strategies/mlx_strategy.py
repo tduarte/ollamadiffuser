@@ -45,15 +45,31 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------
 
 # Variants this strategy can route. Adding a new mflux-supported family
-# is a matter of (a) extending this dict and (b) plumbing the variant
-# through ``_resolve_model_and_config``.
+# is a matter of (a) extending this dict, (b) plumbing the variant
+# through ``_resolve_model_and_config``, and (c) listing any required
+# input kwargs in ``_VARIANT_REQUIRED_INPUTS``.
 SUPPORTED_MLX_VARIANTS = frozenset({
-    "flux1",          # FLUX.1 schnell / dev / krea-dev (text-to-image)
-    "flux1-kontext",  # FLUX.1 Kontext (image editing)
-    "flux2",          # FLUX.2 klein 4B/9B (text-to-image)
-    "z_image",        # Z-Image / Z-Image-Turbo (text-to-image)
-    "qwen-image",     # Qwen-Image / Qwen-Image-Edit
+    "flux1",             # FLUX.1 schnell / dev / krea-dev (text-to-image)
+    "flux1-kontext",     # FLUX.1 Kontext (image editing)
+    "flux1-fill",        # FLUX.1 Fill (inpaint / outpaint)
+    "flux1-redux",       # FLUX.1 Redux (image-to-image variation)
+    "flux1-depth",       # FLUX.1 Depth (depth-conditioned generation)
+    "flux1-controlnet",  # FLUX.1 ControlNet (canny / upscaler)
+    "flux2",             # FLUX.2 klein 4B/9B (text-to-image)
+    "z_image",           # Z-Image / Z-Image-Turbo (text-to-image)
+    "qwen-image",        # Qwen-Image / Qwen-Image-Edit
 })
+
+# Per-variant required-input kwargs (passed to ``generate()``). If any
+# of these are absent, ``generate()`` raises ValueError early instead of
+# letting mflux crash deep inside the pipeline.
+_VARIANT_REQUIRED_INPUTS = {
+    "flux1-kontext":    ["image"],
+    "flux1-fill":       ["image", "mask_image"],
+    "flux1-redux":      ["redux_images"],
+    "flux1-depth":      ["image"],
+    "flux1-controlnet": ["control_image"],
+}
 
 # mflux quantization values it actually accepts. None means "no quant".
 _VALID_QUANTIZE = (None, 4, 8)
@@ -209,6 +225,59 @@ class MLXStrategy(InferenceStrategy):
                 )
             return Flux1Kontext, ModelConfig.dev_kontext()
 
+        if variant == "flux1-fill":
+            from mflux.models.flux.variants.fill.flux_fill import Flux1Fill
+            from mflux.models.common.config.model_config import ModelConfig
+            # Two factories: dev_fill (general) and dev_fill_catvton (try-on).
+            factories = {
+                "dev": ModelConfig.dev_fill,
+                "fill": ModelConfig.dev_fill,
+                "catvton": ModelConfig.dev_fill_catvton,
+            }
+            if mlx_model_name not in factories:
+                raise ValueError(
+                    f"flux1-fill: mlx_model_name must be one of {sorted(factories)}, "
+                    f"got {mlx_model_name!r}"
+                )
+            return Flux1Fill, factories[mlx_model_name]()
+
+        if variant == "flux1-redux":
+            from mflux.models.flux.variants.redux.flux_redux import Flux1Redux
+            from mflux.models.common.config.model_config import ModelConfig
+            if mlx_model_name not in ("dev", "redux"):
+                raise ValueError(
+                    f"flux1-redux: mlx_model_name must be 'dev' or 'redux', "
+                    f"got {mlx_model_name!r}"
+                )
+            return Flux1Redux, ModelConfig.dev_redux()
+
+        if variant == "flux1-depth":
+            from mflux.models.flux.variants.depth.flux_depth import Flux1Depth
+            from mflux.models.common.config.model_config import ModelConfig
+            if mlx_model_name not in ("dev", "depth"):
+                raise ValueError(
+                    f"flux1-depth: mlx_model_name must be 'dev' or 'depth', "
+                    f"got {mlx_model_name!r}"
+                )
+            return Flux1Depth, ModelConfig.dev_depth()
+
+        if variant == "flux1-controlnet":
+            from mflux.models.flux.variants.controlnet.flux_controlnet import Flux1Controlnet
+            from mflux.models.common.config.model_config import ModelConfig
+            factories = {
+                "canny":             ModelConfig.dev_controlnet_canny,
+                "canny-dev":         ModelConfig.dev_controlnet_canny,
+                "canny-schnell":     ModelConfig.schnell_controlnet_canny,
+                "upscaler":          ModelConfig.dev_controlnet_upscaler,
+                "upscaler-dev":      ModelConfig.dev_controlnet_upscaler,
+            }
+            if mlx_model_name not in factories:
+                raise ValueError(
+                    f"flux1-controlnet: mlx_model_name must be one of "
+                    f"{sorted(factories)}, got {mlx_model_name!r}"
+                )
+            return Flux1Controlnet, factories[mlx_model_name]()
+
         if variant == "flux2":
             from mflux.models.flux2.variants.txt2img.flux2_klein import Flux2Klein
             from mflux.models.common.config.model_config import ModelConfig
@@ -289,19 +358,35 @@ class MLXStrategy(InferenceStrategy):
         # Seed (mflux requires an explicit int — no None allowed).
         used_seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
-        # mflux's generate_image accepts img2img via image_path + image_strength.
-        # We accept the same convention from our existing strategies: kwargs["image"]
-        # may be a PIL Image (in-memory) or a path str.
-        image_arg = kwargs.get("image")
-        image_strength = kwargs.get("strength")
-        image_path = self._materialize_image_path(image_arg) if image_arg else None
+        # mflux's variants accept different image-conditioning kwargs.
+        # We accept the same convention from our existing strategies:
+        #   kwargs["image"]         → image_path           (img2img, kontext, fill, depth)
+        #   kwargs["mask_image"]    → masked_image_path    (fill / inpainting)
+        #   kwargs["depth_image"]   → depth_image_path     (depth, optional)
+        #   kwargs["control_image"] → controlnet_image_path (controlnet)
+        #   kwargs["redux_images"]  → redux_image_paths    (redux, list)
+        # Each may be a PIL Image, a path str, or (for redux) a list thereof.
+        image_path           = self._materialize_image_path(kwargs.get("image"))
+        masked_image_path    = self._materialize_image_path(kwargs.get("mask_image"))
+        depth_image_path     = self._materialize_image_path(kwargs.get("depth_image"))
+        controlnet_image_path = self._materialize_image_path(kwargs.get("control_image"))
+        redux_image_paths    = self._materialize_image_path_list(kwargs.get("redux_images"))
 
-        # Kontext is an image-editing model — it REQUIRES an input image.
-        # Fail loud rather than letting mflux error mid-pipeline.
-        if self._variant == "flux1-kontext" and image_path is None:
+        # Per-variant required-input enforcement. Fail loud here rather
+        # than letting mflux crash mid-pipeline with a cryptic error.
+        required = _VARIANT_REQUIRED_INPUTS.get(self._variant, [])
+        provided = {
+            "image":         image_path,
+            "mask_image":    masked_image_path,
+            "depth_image":   depth_image_path,
+            "control_image": controlnet_image_path,
+            "redux_images":  redux_image_paths,
+        }
+        missing = [k for k in required if not provided.get(k)]
+        if missing:
             raise ValueError(
-                "flux1-kontext is an image-editing model — "
-                "pass image=<PIL.Image or path> to generate()."
+                f"MLX variant {self._variant!r} requires kwargs {missing}; "
+                f"pass them to generate(), e.g. generate(prompt, image=<PIL|path>)."
             )
 
         # Negative prompt: mflux accepts None or str.
@@ -309,7 +394,7 @@ class MLXStrategy(InferenceStrategy):
 
         # Build the kwargs we'd LIKE to pass; filter to what this variant's
         # generate_image() actually accepts (Flux2Klein has no negative_prompt
-        # parameter, for instance).
+        # parameter, for instance; Flux1Fill has masked_image_path).
         candidate_kwargs = {
             "seed": int(used_seed),
             "prompt": prompt,
@@ -318,7 +403,13 @@ class MLXStrategy(InferenceStrategy):
             "width": int(width),
             "guidance": float(guidance),
             "image_path": image_path,
-            "image_strength": image_strength,
+            "masked_image_path": masked_image_path,
+            "depth_image_path": depth_image_path,
+            "controlnet_image_path": controlnet_image_path,
+            "redux_image_paths": redux_image_paths,
+            "image_strength": kwargs.get("strength"),
+            "controlnet_strength": kwargs.get("controlnet_strength"),
+            "redux_image_strengths": kwargs.get("redux_image_strengths"),
             "negative_prompt": neg,
         }
         try:
@@ -369,6 +460,16 @@ class MLXStrategy(InferenceStrategy):
         raise TypeError(
             f"Unsupported image type for MLX img2img: {type(image_arg).__name__}"
         )
+
+    @classmethod
+    def _materialize_image_path_list(cls, images_arg) -> Optional[list]:
+        """Normalize a list-of-images kwarg (PIL or paths) to list-of-paths."""
+        if images_arg is None:
+            return None
+        if not isinstance(images_arg, (list, tuple)):
+            # Allow scalar PIL/path too — wrap in a list.
+            images_arg = [images_arg]
+        return [cls._materialize_image_path(x) for x in images_arg if x is not None]
 
     # ----- Lifecycle ----------------------------------------------------
 

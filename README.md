@@ -4,7 +4,11 @@
 
 `ollamadiffuser` is in **active development**. v2.0 brought a major architecture overhaul (strategy pattern, MCP/OpenClaw integration, Apple Silicon support, GGUF). The current line (v2.0.14) keeps adding new models on top of that foundation — see [What's New](#-whats-new-in-v2014) below. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
 
-## 🆕 What's New in v2.0.16
+## 🆕 What's New in v2.0.17
+
+- **🍎 MLX backend Phase 2.5 — FLUX.1 family completion** — wired four more mflux variants: `flux1-fill` (inpaint/outpaint), `flux1-redux` (image variation), `flux1-depth` (depth-conditioned), `flux1-controlnet` (canny + upscaler). FLUX.1 family on MLX is now at full feature parity with the PyTorch path. Five new registry entries (14 MLX entries total). Phase 3 (HiDream-O1) still open — upstream has no clean Python API yet.
+
+## What was added in v2.0.16
 
 - **🍎 MLX backend Phase 2** — `MLXStrategy` now routes **all five** mflux model families. Seven new registry entries on top of Phase 1's three (10 MLX entries total):
 
