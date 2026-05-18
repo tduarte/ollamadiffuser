@@ -88,6 +88,58 @@ class ModelRegistry:
                 }
             },
 
+            "flux.1-kontext-dev": {
+                "repo_id": "black-forest-labs/FLUX.1-Kontext-dev",
+                "model_type": "flux",
+                "variant": "fp16",
+                "parameters": {
+                    "pipeline_class": "FluxKontextPipeline",
+                    "num_inference_steps": 28,
+                    "guidance_scale": 2.5,
+                    "max_sequence_length": 512
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 20,
+                    "recommended_vram_gb": 24,
+                    "min_ram_gb": 32,
+                    "recommended_ram_gb": 64,
+                    "disk_space_gb": 24,
+                    "supported_devices": ["CUDA", "MPS"],
+                    "performance_notes": "12B instruction-based image editing model. Pass an input 'image' to the generate call along with the edit prompt. Native diffusers FluxKontextPipeline. Top-trending image-edit model on HuggingFace."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
+            "chroma1-hd": {
+                "repo_id": "lodestones/Chroma1-HD",
+                "model_type": "generic",
+                "variant": "fp16",
+                "parameters": {
+                    "pipeline_class": "ChromaPipeline",
+                    "num_inference_steps": 28,
+                    "guidance_scale": 4.0,
+                    "torch_dtype": "bfloat16"
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 16,
+                    "recommended_vram_gb": 24,
+                    "min_ram_gb": 24,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 18,
+                    "supported_devices": ["CUDA", "MPS"],
+                    "performance_notes": "8.9B FLUX-schnell derivative with custom MMDiT masking + 250M timestep FFN. Apache 2.0 (rare for this size). On 16GB Macs use enable_model_cpu_offload via API."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
             "flux.1-dev-gguf-q2k": {
                 "repo_id": "city96/FLUX.1-dev-gguf",
                 "model_type": "flux",

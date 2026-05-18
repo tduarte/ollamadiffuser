@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.14] - 2026-05-17
+
+### 📋 Registry — New Models
+
+- **`flux.1-kontext-dev`** ([black-forest-labs/FLUX.1-Kontext-dev](https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev)) — 12B instruction-based image-editing model. Currently the top-trending image-edit model on HuggingFace. Routed through the existing FluxStrategy with `pipeline_class: "FluxKontextPipeline"` (already exposed by diffusers ≥ 0.34). Pass an input `image` to `generate()` along with the edit instruction. FLUX Non-Commercial License.
+
+- **`chroma1-hd`** ([lodestones/Chroma1-HD](https://huggingface.co/lodestones/Chroma1-HD)) — 8.9B FLUX-schnell derivative with custom MMDiT masking and a 250M timestep FFN. Routed through `GenericPipelineStrategy` with `pipeline_class: "ChromaPipeline"`. **Apache 2.0** — rare for a model this capable. On 16GB Macs, enable CPU offload at runtime.
+
 ## [2.0.13] - 2026-05-08
 
 ### 🐛 Bug Fixes
