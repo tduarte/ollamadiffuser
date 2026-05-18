@@ -1,8 +1,18 @@
 ### Project Status: Active Development
 
-**Thank you for the incredible support and over 20,000 downloads!**
+**Thank you for the incredible support and over 30,000 downloads!**
 
-`ollamadiffuser` is back in **active development**. v2.0 brings a major architecture overhaul, 21 new models, MCP/OpenClaw integration, and Apple Silicon support. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
+`ollamadiffuser` is in **active development**. v2.0 brought a major architecture overhaul (strategy pattern, MCP/OpenClaw integration, Apple Silicon support, GGUF). The current line (v2.0.14) keeps adding new models on top of that foundation — see [What's New](#-whats-new-in-v2014) below. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
+
+## 🆕 What's New in v2.0.14
+
+- **`flux.1-kontext-dev`** — 12B instruction-based image editing. Pass an input image + edit prompt; the model rewrites the image. Top-trending image-edit model on HuggingFace.
+- **`chroma1-hd`** — 8.9B Apache 2.0 base T2I (FLUX-schnell derivative with custom MMDiT masking). Rare commercial-friendly license at this quality tier.
+- **Fixed `ollamadiffuser recommend` crash on CUDA hosts** (PyTorch attribute typo). Every CUDA user hit this; it's gone.
+- **Discussions** enabled on the repo: https://github.com/LocalKinAI/ollamadiffuser/discussions
+- 18 broken `github.com/ollamadiffuser/ollamadiffuser` → `github.com/LocalKinAI/ollamadiffuser` URL fixes (PyPI sidebar links, README, GGUF guide).
+
+See [CHANGELOG.md](CHANGELOG.md) for full history.
 
 # OllamaDiffuser 🎨
 
@@ -21,7 +31,7 @@
 
 ---
 
-## 🚀 Quick Start (v2.0)
+## 🚀 Quick Start
 
 **For Mac/PC Users:**
 ```bash
@@ -253,9 +263,25 @@ Choose from 40+ models spanning every major architecture:
 
 | Model | Pipeline | Use Case |
 |-------|----------|----------|
+| `flux.1-kontext-dev` | FluxKontextPipeline | **Instruction-based image editing** — pass an input image + edit prompt (added v2.0.14) |
 | `flux.1-fill-dev` | FluxFillPipeline | Inpainting / outpainting |
 | `flux.1-canny-dev` | FluxControlPipeline | Canny edge control |
 | `flux.1-depth-dev` | FluxControlPipeline | Depth map control |
+
+### Apache-2.0 Commercial-Friendly
+
+| Model | Origin | Params | Notes |
+|-------|--------|--------|-------|
+| `chroma1-hd` | lodestones | 8.9B | FLUX-schnell derivative with custom MMDiT masking + 250M timestep FFN (added v2.0.14) |
+| `flux.1-schnell` | Black Forest Labs | 12B | 4-step distilled |
+| `flux.2-klein-4b` | Black Forest Labs | 4B | FLUX.2 family, MPS-friendly |
+| `z-image-turbo` | Alibaba (Tongyi) | 6B | 8-step DMD |
+| `sana-1.5` | NVIDIA | 1.6B | Fastest >1024² generation |
+| `cogview4` | Zhipu AI | 6B | Multilingual including CJK |
+| `pixart-sigma` | PixArt | 0.6B | Fits 6GB GPUs |
+| `lumina-2` | Alpha-VLLM | 2B | Open multimodal foundation |
+| `auraflow` | Fal | 6.8B | Latest open MMDiT |
+| `omnigen` | BAAI | 3.8B | Unified gen + edit |
 
 ### 💾 GGUF Models - Reduced Memory Requirements
 
