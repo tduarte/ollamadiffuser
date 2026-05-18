@@ -4,13 +4,20 @@
 
 `ollamadiffuser` is in **active development**. v2.0 brought a major architecture overhaul (strategy pattern, MCP/OpenClaw integration, Apple Silicon support, GGUF). The current line (v2.0.14) keeps adding new models on top of that foundation — see [What's New](#-whats-new-in-v2014) below. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
 
-## 🆕 What's New in v2.0.14
+## 🆕 What's New in v2.0.15
 
-- **`flux.1-kontext-dev`** — 12B instruction-based image editing. Pass an input image + edit prompt; the model rewrites the image. Top-trending image-edit model on HuggingFace.
-- **`chroma1-hd`** — 8.9B Apache 2.0 base T2I (FLUX-schnell derivative with custom MMDiT masking). Rare commercial-friendly license at this quality tier.
-- **Fixed `ollamadiffuser recommend` crash on CUDA hosts** (PyTorch attribute typo). Every CUDA user hit this; it's gone.
+- **🍎 MLX backend (Phase 1)** — new `MLXStrategy` routes FLUX.1 schnell / dev through [mflux](https://github.com/filipstrand/mflux) for **Apple-Silicon-native inference**. Typically **2-3× faster** than the PyTorch + MPS path. Three new registry entries: `flux.1-schnell-mlx`, `flux.1-schnell-mlx-q4` (Mac Mini M4 16GB friendly), `flux.1-dev-mlx`. Install with `pip install 'ollamadiffuser[mlx]'`. Tracks [#7](https://github.com/LocalKinAI/ollamadiffuser/issues/7).
+
+## What was added in v2.0.14
+
+- **`flux.1-kontext-dev`** — 12B instruction-based image editing. Pass an input image + edit prompt; the model rewrites the image.
+- **`chroma1-hd`** — 8.9B Apache 2.0 base T2I (FLUX-schnell derivative). Rare commercial-friendly license at this quality tier.
+
+## What was added in v2.0.13
+
+- Fixed `ollamadiffuser recommend` crash on CUDA hosts (PyTorch attribute typo) — every CUDA user hit this.
 - **Discussions** enabled on the repo: https://github.com/LocalKinAI/ollamadiffuser/discussions
-- 18 broken `github.com/ollamadiffuser/ollamadiffuser` → `github.com/LocalKinAI/ollamadiffuser` URL fixes (PyPI sidebar links, README, GGUF guide).
+- 18 broken `github.com/ollamadiffuser/ollamadiffuser` → `github.com/LocalKinAI/ollamadiffuser` URL fixes (PyPI sidebar links etc.).
 
 See [CHANGELOG.md](CHANGELOG.md) for full history.
 

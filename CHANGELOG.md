@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.15] - 2026-05-18
+
+### 🍎 MLX Backend (Phase 1 of #7)
+
+Apple-Silicon-native inference is here. New `MLXStrategy` routes through
+[mflux](https://github.com/filipstrand/mflux) — a pure MLX implementation
+of FLUX-family models that targets the Metal/Neural Engine stack natively.
+On M-series Macs this is typically **2-3× faster** than the PyTorch+MPS
+path that the other strategies use.
+
+**This is Phase 1.** It ships FLUX.1 text-to-image (schnell / dev) with
+optional MLX 4-bit and 8-bit quantization. Phase 2 (FLUX.2, Z-Image,
+Qwen-Image via mflux) and Phase 3 (HiDream-O1 via mlx-community) are
+follow-ups — track [#7](https://github.com/LocalKinAI/ollamadiffuser/issues/7).
+
+#### New strategy
+
+`ollamadiffuser/core/inference/strategies/mlx_strategy.py`
+  - `MLXStrategy` class — routes via mflux's `Flux1.from_name()` /
+    `generate_image()` API. Lazy-imports mflux so the module is safe
+    to import on non-Mac hosts.
+  - Refuses to load on anything other than macOS arm64 with a clear
+    error message.
+  - Overrides `unload()` (no torch cleanup) and `load_lora_runtime()`
+    (mflux takes LoRAs at construction time, not at runtime — runtime
+    LoRA is deferred).
+  - `_get_strategy("mlx")` in `engine.py` now dispatches to it.
+
+#### New registry entries
+
+| Name | Quant | Disk | Recommended VRAM | License |
+|---|---|---|---|---|
+| `flux.1-schnell-mlx` | 8-bit | 14 GB | 16 GB | Apache 2.0 |
+| `flux.1-schnell-mlx-q4` | 4-bit | 8 GB | 12 GB (M4 16GB friendly) | Apache 2.0 |
+| `flux.1-dev-mlx` | 8-bit | 14 GB | 16 GB | FLUX Non-Commercial |
+
+#### New optional dependency
+
+```bash
+pip install 'ollamadiffuser[mlx]'   # installs mflux >= 0.17.0
+```
+
+The `mflux` wheel is `darwin/arm64`-only — pip's environment marker
+prevents installs on Linux/Windows so the extra is a no-op there.
+`[full]` extra now bundles `mflux` alongside GGUF + MCP.
+
+#### Tests
+
+16 new tests in `tests/test_mlx_strategy.py` covering dispatch, platform
+refusal, config validation, mocked load/generate (no real download), and
+the unsupported-feature contract (runtime LoRA). All 94 tests pass.
+
 ## [2.0.14] - 2026-05-17
 
 ### 📋 Registry — New Models

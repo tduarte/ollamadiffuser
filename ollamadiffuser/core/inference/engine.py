@@ -46,6 +46,10 @@ def _get_strategy(model_type: str) -> InferenceStrategy:
     elif model_type == "generic":
         from .strategies.generic_strategy import GenericPipelineStrategy
         return GenericPipelineStrategy()
+    elif model_type == "mlx":
+        # Apple-Silicon-native inference via mflux. See issue #7.
+        from .strategies.mlx_strategy import MLXStrategy
+        return MLXStrategy()
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 

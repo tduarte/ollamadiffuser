@@ -114,6 +114,90 @@ class ModelRegistry:
                 }
             },
 
+            "flux.1-schnell-mlx": {
+                "repo_id": "black-forest-labs/FLUX.1-schnell",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1",
+                    "mlx_model_name": "schnell",
+                    "quantize": 8,
+                    "num_inference_steps": 4,
+                    "guidance_scale": 0.0,
+                    "max_sequence_length": 256
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 16,
+                    "min_ram_gb": 16,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 14,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native via mflux. Typically 2-3x faster than the PyTorch+MPS path. Apache 2.0. Requires the [mlx] extra: pip install 'ollamadiffuser[mlx]'."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
+            "flux.1-dev-mlx": {
+                "repo_id": "black-forest-labs/FLUX.1-dev",
+                "model_type": "mlx",
+                "variant": "mlx-q8",
+                "parameters": {
+                    "mlx_variant": "flux1",
+                    "mlx_model_name": "dev",
+                    "quantize": 8,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5,
+                    "max_sequence_length": 512
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 12,
+                    "recommended_vram_gb": 16,
+                    "min_ram_gb": 16,
+                    "recommended_ram_gb": 32,
+                    "disk_space_gb": 14,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Apple Silicon native via mflux at 8-bit quant. Typically 2-3x faster than PyTorch+MPS. Gated FLUX.1-dev license — set HF_TOKEN before pulling. Requires the [mlx] extra."
+                },
+                "license_info": {
+                    "type": "FLUX.1 Non-Commercial License",
+                    "requires_agreement": True,
+                    "commercial_use": False
+                }
+            },
+
+            "flux.1-schnell-mlx-q4": {
+                "repo_id": "black-forest-labs/FLUX.1-schnell",
+                "model_type": "mlx",
+                "variant": "mlx-q4",
+                "parameters": {
+                    "mlx_variant": "flux1",
+                    "mlx_model_name": "schnell",
+                    "quantize": 4,
+                    "num_inference_steps": 4,
+                    "guidance_scale": 0.0,
+                    "max_sequence_length": 256
+                },
+                "hardware_requirements": {
+                    "min_vram_gb": 6,
+                    "recommended_vram_gb": 12,
+                    "min_ram_gb": 16,
+                    "recommended_ram_gb": 24,
+                    "disk_space_gb": 8,
+                    "supported_devices": ["MPS"],
+                    "performance_notes": "Mac Mini M4 16GB friendly. 4-bit MLX quant of FLUX.1-schnell — small quality drop vs Q8 but fits ~8GB. Apache 2.0."
+                },
+                "license_info": {
+                    "type": "Apache 2.0",
+                    "requires_agreement": False,
+                    "commercial_use": True
+                }
+            },
+
             "chroma1-hd": {
                 "repo_id": "lodestones/Chroma1-HD",
                 "model_type": "generic",
