@@ -2,43 +2,30 @@
 
 **Thank you for the incredible support and over 30,000 downloads!**
 
-`ollamadiffuser` is in **active development**. v2.0 brought a major architecture overhaul (strategy pattern, MCP/OpenClaw integration, Apple Silicon support, GGUF). The current line (v2.0.14) keeps adding new models on top of that foundation — see [What's New](#-whats-new-in-v2014) below. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
+`ollamadiffuser` is in **active development**. v2.0 brought a major architecture overhaul (strategy pattern, MCP/OpenClaw integration, Apple Silicon support, GGUF). The May 2026 line (v2.0.13 → v2.0.17) added an **MLX backend for Apple Silicon** plus 7 new diffusers-pipeline models — see [What's New](#-whats-new) below. Part of the **[LocalKinAI](https://github.com/LocalKinAI)** ecosystem.
 
-## 🆕 What's New in v2.0.17
+## 🆕 What's New
 
-- **🍎 MLX backend Phase 2.5 — FLUX.1 family completion** — wired four more mflux variants: `flux1-fill` (inpaint/outpaint), `flux1-redux` (image variation), `flux1-depth` (depth-conditioned), `flux1-controlnet` (canny + upscaler). FLUX.1 family on MLX is now at full feature parity with the PyTorch path. Five new registry entries (14 MLX entries total). Phase 3 (HiDream-O1) still open — upstream has no clean Python API yet.
+### v2.0.17 — MLX Phase 2.5: FLUX.1 family completion
 
-## What was added in v2.0.16
+`MLXStrategy` now covers the full FLUX.1 family on Apple Silicon: `flux1-fill` (inpaint/outpaint), `flux1-redux` (image variation), `flux1-depth` (depth-conditioned), `flux1-controlnet` (canny + upscaler). Five new registry entries — **14 MLX entries total** (see [the MLX section](#-mlx-models-apple-silicon-native) below).
 
-- **🍎 MLX backend Phase 2** — `MLXStrategy` now routes **all five** mflux model families. Seven new registry entries on top of Phase 1's three (10 MLX entries total):
+### v2.0.15–v2.0.16 — MLX Backend (Phases 1 + 2)
 
-  | Entry | Variant | Quant | License | Fits M4 16GB? |
-  |---|---|---|---|---|
-  | `flux.1-kontext-dev-mlx` | FLUX.1 Kontext | 8-bit | Non-Commercial | ❌ |
-  | `flux.2-klein-4b-mlx` | FLUX.2 Klein 4B | 8-bit | Apache 2.0 | ✅ |
-  | `flux.2-klein-9b-mlx` | FLUX.2 Klein 9B | 8-bit | Apache 2.0 | ❌ |
-  | `z-image-turbo-mlx` | Z-Image Turbo (6B) | 8-bit | Apache 2.0 | ✅ |
-  | `qwen-image-mlx` | Qwen-Image (20B) | 8-bit | Apache 2.0 | ❌ |
-  | `qwen-image-edit-mlx` | Qwen-Image-Edit | 8-bit | Apache 2.0 | ❌ |
+New `MLXStrategy` routes FLUX.1 / FLUX.2 / Z-Image / Qwen-Image / Kontext through [mflux](https://github.com/filipstrand/mflux) for native Apple Silicon inference. **Typically 2-3× faster than the PyTorch + MPS path.** Install with `pip install 'ollamadiffuser[mlx]'`. Tracks [#7](https://github.com/LocalKinAI/ollamadiffuser/issues/7).
 
-  Tracks [#7](https://github.com/LocalKinAI/ollamadiffuser/issues/7) — Phase 3 (HiDream-O1) still open.
+### v2.0.14 — Diffusers Pipeline Additions
 
-## What was added in v2.0.15
+- **`flux.1-kontext-dev`** (PyTorch) — 12B instruction-based image editing. Pass an input image + edit prompt; the model rewrites the image.
+- **`chroma1-hd`** — 8.9B Apache-2.0 base T2I (FLUX-schnell derivative). Rare commercial-friendly license at this quality tier.
 
-- **🍎 MLX backend Phase 1** — new `MLXStrategy` routes FLUX.1 schnell / dev through [mflux](https://github.com/filipstrand/mflux) for **Apple-Silicon-native inference**. Typically **2-3× faster** than the PyTorch + MPS path. Install with `pip install 'ollamadiffuser[mlx]'`.
+### v2.0.13 — Bug Fixes + Discussions
 
-## What was added in v2.0.14
+- Fixed `ollamadiffuser recommend` crash on CUDA hosts (PyTorch attribute typo).
+- **GitHub Discussions** enabled: https://github.com/LocalKinAI/ollamadiffuser/discussions
+- 18 broken org-name URLs fixed across PyPI metadata, README, and guides.
 
-- **`flux.1-kontext-dev`** — 12B instruction-based image editing. Pass an input image + edit prompt; the model rewrites the image.
-- **`chroma1-hd`** — 8.9B Apache 2.0 base T2I (FLUX-schnell derivative). Rare commercial-friendly license at this quality tier.
-
-## What was added in v2.0.13
-
-- Fixed `ollamadiffuser recommend` crash on CUDA hosts (PyTorch attribute typo) — every CUDA user hit this.
-- **Discussions** enabled on the repo: https://github.com/LocalKinAI/ollamadiffuser/discussions
-- 18 broken `github.com/ollamadiffuser/ollamadiffuser` → `github.com/LocalKinAI/ollamadiffuser` URL fixes (PyPI sidebar links etc.).
-
-See [CHANGELOG.md](CHANGELOG.md) for full history.
+See [CHANGELOG.md](CHANGELOG.md) for the full history (back to v1.0.0, May 2025).
 
 # OllamaDiffuser 🎨
 
@@ -84,22 +71,24 @@ Most models work **without any token** -- just install and go. See [Hugging Face
 
 ## ✨ Features
 
-- **🏗️ Strategy Architecture**: Clean per-model strategy pattern (SD1.5, SDXL, FLUX, SD3, ControlNet, Video, HiDream, GGUF, Generic)
-- **🌐 40+ Models**: FLUX.2, SD 3.5, SDXL Lightning, CogView4, Kolors, SANA, PixArt-Sigma, and more
+- **🏗️ Strategy Architecture**: Clean per-model strategy pattern (SD1.5, SDXL, FLUX, SD3, ControlNet, Video, HiDream, GGUF, MLX, Generic)
+- **🌐 60+ Models**: FLUX.1/2, SD 3.5, SDXL Lightning, CogView4, Kolors, SANA, PixArt-Sigma, Z-Image, Qwen-Image, Chroma1, and more
 - **🔌 Generic Pipeline**: Add new diffusers models via registry config alone -- no code changes needed
 - **🖼️ img2img & Inpainting**: Image-to-image and inpainting support across SD1.5, SDXL, and the API/Web UI
 - **⚡ Async API**: Non-blocking FastAPI server using `asyncio.to_thread` for GPU operations
 - **🎲 Random Seeds**: Reproducible generation with explicit seeds, random by default
-- **🎛️ ControlNet Support**: Precise image generation control with 10+ control types
+- **🎛️ ControlNet Support**: Precise image generation control with 10+ control types (PyTorch + MLX)
 - **🔄 LoRA Integration**: Dynamic LoRA loading and management
 - **🔌 MCP & OpenClaw**: Model Context Protocol server for AI assistant integration (OpenClaw, Claude Code, Cursor)
-- **🍎 Apple Silicon**: MPS dtype handling (per-model float16/bfloat16, NaN sanitization), GGUF Metal acceleration, `ollamadiffuser recommend` for hardware-aware model suggestions
+- **🍎 Apple Silicon, two paths**:
+  - **MLX backend** via [mflux](https://github.com/filipstrand/mflux) — 14 native MLX entries (FLUX.1 family, FLUX.2 Klein, Z-Image, Qwen-Image, Kontext, Fill, Redux, Depth, ControlNet). Typically **2-3× faster** than the PyTorch + MPS path on M-series.
+  - **PyTorch + MPS** — full diffusers pipeline support with per-model dtype handling (float16/bfloat16, NaN sanitization), GGUF Metal acceleration, and `ollamadiffuser recommend` for hardware-aware model suggestions.
 - **📦 Smart Downloads**: `ollamadiffuser pull` downloads only diffusers pipeline files — skips root-level checkpoints, ONNX/Flax exports, and safety_checker. Saves 10–200 GB per model.
 - **📦 GGUF Support**: Memory-efficient quantized models (3GB VRAM minimum!) with CUDA and Metal acceleration
 - **🌐 Multiple Interfaces**: CLI, Python API, Web UI, and REST API
 - **📦 Model Management**: Easy installation and switching between models
 - **⚡ Performance Optimized**: Memory-efficient with GPU acceleration
-- **🧪 Test Suite**: 86 tests across settings, registry, engine, API, MPS, and MCP
+- **🧪 Test Suite**: 124 tests across settings, registry, engine, API, MPS, MLX, and MCP
 
 ### Option 1: Install from PyPI (Recommended)
 ```bash
@@ -321,6 +310,45 @@ GGUF quantized models enable running FLUX.1-dev on budget hardware:
 | `flux.1-dev-gguf-q6k` | 10GB | ⭐⭐⭐⭐⭐ | RTX 3080/4070+ |
 
 📖 **[Complete GGUF Guide](GGUF_GUIDE.md)** - Hardware recommendations, installation, and optimization tips
+
+### 🍎 MLX Models — Apple Silicon native
+
+MLX entries run through [mflux](https://github.com/filipstrand/mflux) on Apple Silicon (M1/M2/M3/M4). On M-series hardware they are typically **2-3× faster** than the same model on the PyTorch + MPS path. Install with `pip install 'ollamadiffuser[mlx]'`.
+
+**Text-to-image:**
+
+| Entry | Family | Quant | Disk | Recommended VRAM | License |
+|---|---|---|---|---|---|
+| `flux.1-schnell-mlx` | FLUX.1 | Q8 | 14 GB | 16 GB (M1 32GB) | Apache 2.0 |
+| `flux.1-schnell-mlx-q4` | FLUX.1 | Q4 | 8 GB | 12 GB (**M4 16GB**) | Apache 2.0 |
+| `flux.1-dev-mlx` | FLUX.1 | Q8 | 14 GB | 16 GB | Non-Commercial |
+| `flux.2-klein-4b-mlx` | FLUX.2 Klein | Q8 | 7 GB | 12 GB (**M4 16GB**) | Apache 2.0 |
+| `flux.2-klein-9b-mlx` | FLUX.2 Klein | Q8 | 13 GB | 20 GB | Apache 2.0 |
+| `z-image-turbo-mlx` | Z-Image (6B, 8-step DMD) | Q8 | 8 GB | 12 GB (**M4 16GB**) | Apache 2.0 |
+| `qwen-image-mlx` | Qwen-Image (20B) | Q8 | 22 GB | 24 GB | Apache 2.0 |
+
+**Image editing / control:**
+
+| Entry | Required inputs | License |
+|---|---|---|
+| `flux.1-kontext-dev-mlx` | `image=` | Non-Commercial |
+| `flux.1-fill-dev-mlx` | `image=`, `mask_image=` | Non-Commercial |
+| `flux.1-redux-dev-mlx` | `redux_images=[...]` | Non-Commercial |
+| `flux.1-depth-dev-mlx` | `image=` | Non-Commercial |
+| `flux.1-controlnet-canny-mlx` | `control_image=` (canny edges) | Non-Commercial |
+| `flux.1-controlnet-upscaler-mlx` | `control_image=` (low-res source) | Non-Commercial |
+| `qwen-image-edit-mlx` | `image=` | Apache 2.0 |
+
+**Hardware fit at a glance:**
+- **Mac Mini M4 16 GB** can run anything marked ✅ above (Q4 FLUX.1-schnell, FLUX.2 Klein 4B, Z-Image-Turbo).
+- **Mac Pro M1 32 GB / M2 Pro 32 GB+** can run all entries except the 20B Qwen-Image at the larger resolutions.
+
+Quick start:
+```bash
+pip install 'ollamadiffuser[mlx]'
+ollamadiffuser pull z-image-turbo-mlx    # smallest Apache-2.0 option
+ollamadiffuser run z-image-turbo-mlx
+```
 
 ---
 
