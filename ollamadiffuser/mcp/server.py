@@ -3,6 +3,7 @@
 import asyncio
 import io
 import logging
+import os
 import sys
 from typing import Optional
 
@@ -173,16 +174,27 @@ def create_mcp_server():
                 fingers, deformed, ...) into the negative prompt (recommended).
         """
         negative_prompt = _merge_negatives(negative_prompt, avoid_anatomy_errors)
-        if model and model_manager.get_current_model() != model:
-            if not model_manager.is_model_installed(model):
+        # Decide whether we must (re)load. get_current_model() returns the
+        # *persisted* current-model name, which survives an unload/restart even
+        # when nothing is resident. So "name matches current" is NOT sufficient
+        # to skip loading — we must also confirm something is actually in memory.
+        # Otherwise generate_image(model='x') after a respawn wrongly skips the
+        # load and then fails with "No model loaded".
+        want = model or model_manager.get_current_model()
+        need_load = bool(want) and (
+            not model_manager.is_model_loaded()
+            or model_manager.get_current_model() != want
+        )
+        if need_load:
+            if not model_manager.is_model_installed(want):
                 raise ValueError(
-                    f"Model '{model}' is not installed. "
-                    f"Install it first: ollamadiffuser pull {model}"
+                    f"Model '{want}' is not installed. "
+                    f"Install it first: ollamadiffuser pull {want}"
                 )
-            logger.info(f"Loading model: {model}")
-            success = await asyncio.to_thread(model_manager.load_model, model)
+            logger.info(f"Loading model: {want}")
+            success = await asyncio.to_thread(model_manager.load_model, want)
             if not success:
-                raise RuntimeError(f"Failed to load model '{model}'")
+                raise RuntimeError(f"Failed to load model '{want}'")
 
         if not model_manager.is_model_loaded():
             raise RuntimeError(
@@ -257,7 +269,9 @@ def create_mcp_server():
             status_parts = []
             if name in installed:
                 status_parts.append("installed")
-            if name == current:
+            # "loaded" means actually resident in memory — not merely the
+            # persisted current-model name (which survives unload/restart).
+            if name == current and model_manager.is_model_loaded():
                 status_parts.append("loaded")
             suffix = f" ({', '.join(status_parts)})" if status_parts else ""
 
@@ -274,7 +288,10 @@ def create_mcp_server():
 
         lines.append(f"\nInstalled: {len(installed)}/{len(names)}")
         if current:
-            lines.append(f"Currently loaded: {current}")
+            if model_manager.is_model_loaded():
+                lines.append(f"Currently loaded: {current}")
+            else:
+                lines.append(f"Current model (not resident, will load on use): {current}")
 
         return "\n".join(lines)
 
@@ -724,6 +741,21 @@ def main(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
+
+    # Guarantee the client can always terminate us. Generation runs on a
+    # background (daemon) thread; if the client SIGTERMs us mid-run — e.g. it
+    # gave up on a slow call and is restarting the server — exit hard so we
+    # can't linger as an orphaned process holding a multi-GB model in memory.
+    if transport == "stdio":
+        import signal
+
+        def _hard_exit(_signum, _frame):
+            os._exit(0)
+
+        try:
+            signal.signal(signal.SIGTERM, _hard_exit)
+        except (ValueError, OSError):
+            pass  # e.g. not running in the main thread
 
     server = create_mcp_server()
 

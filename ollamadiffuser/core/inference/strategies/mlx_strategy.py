@@ -30,7 +30,9 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import platform
+import queue
 import random
+import threading
 from typing import Optional
 
 from PIL import Image
@@ -39,6 +41,51 @@ from ..base import InferenceStrategy
 from ...config.settings import ModelConfig
 
 logger = logging.getLogger(__name__)
+
+
+class _SingleThreadRunner:
+    """Runs callables on one dedicated **daemon** thread.
+
+    MLX binds its Metal GPU stream to the thread that first touches the model, so
+    every mflux call (construct, generate, LoRA reload) must run on one
+    consistent thread — see ``MLXStrategy.__init__``.
+
+    We deliberately do NOT use ``concurrent.futures.ThreadPoolExecutor`` here.
+    Its worker threads are non-daemon AND the module registers an interpreter
+    ``atexit`` hook that *joins* them. If the client disconnects mid-generation,
+    that join blocks interpreter shutdown until the (minutes-long) generation
+    finishes — leaving an orphaned, effectively unkillable server process (the
+    exact process pile-up we saw). A daemon thread owning a simple queue avoids
+    both problems: the process can exit immediately and the abandoned worker is
+    torn down with it.
+    """
+
+    def __init__(self, name: str = "mlx") -> None:
+        self._q: "queue.Queue" = queue.Queue()
+        self._thread = threading.Thread(target=self._loop, name=name, daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            item = self._q.get()
+            if item is None:  # shutdown sentinel
+                return
+            fn, args, kwargs, fut = item
+            if not fut.set_running_or_notify_cancel():
+                continue
+            try:
+                fut.set_result(fn(*args, **kwargs))
+            except BaseException as e:  # re-raised on the caller's .result()
+                fut.set_exception(e)
+
+    def run(self, fn, *args, **kwargs):
+        """Submit work and block for its result (re-raising any exception)."""
+        fut: "concurrent.futures.Future" = concurrent.futures.Future()
+        self._q.put((fn, args, kwargs, fut))
+        return fut.result()
+
+    def shutdown(self) -> None:
+        self._q.put(None)
 
 
 # --------------------------------------------------------------------------
@@ -152,7 +199,10 @@ class MLXStrategy(InferenceStrategy):
         # without pinning, build and generate can land on different threads and
         # fail intermittently. Routing every mflux call through one thread keeps
         # construction, generation, and LoRA reloads on the same Metal stream.
-        self._executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        # This is a daemon-backed runner (not a ThreadPoolExecutor) so a client
+        # disconnect mid-generation can't wedge the process — see
+        # _SingleThreadRunner.
+        self._runner: Optional[_SingleThreadRunner] = None
 
     def _run(self, fn, *args, **kwargs):
         """Run an mflux/MLX callable on the strategy's dedicated worker thread.
@@ -161,10 +211,9 @@ class MLXStrategy(InferenceStrategy):
         call site behaves synchronously while the actual Metal work always
         executes on one consistent thread. See ``__init__`` for why.
         """
-        if self._executor is None:
-            self._executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="mlx")
-        return self._executor.submit(lambda: fn(*args, **kwargs)).result()
+        if self._runner is None:
+            self._runner = _SingleThreadRunner(name="mlx")
+        return self._runner.run(fn, *args, **kwargs)
 
     # ----- Loading ------------------------------------------------------
 
@@ -584,9 +633,9 @@ class MLXStrategy(InferenceStrategy):
         self.model_config = None
         self.current_lora = None
         self._variant = None
-        if self._executor is not None:
-            self._executor.shutdown(wait=False)
-            self._executor = None
+        if self._runner is not None:
+            self._runner.shutdown()
+            self._runner = None
         logger.info("MLX model unloaded")
 
     # ----- LoRA (construction-time, via transparent reload) -------------
