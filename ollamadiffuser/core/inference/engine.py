@@ -228,3 +228,23 @@ class InferenceEngine:
         if not self._strategy:
             return False
         return self._strategy.unload_lora()
+
+    # -- Textual inversion / VAE support --
+
+    def load_textual_inversion(self, path: str, token: Optional[str] = None) -> bool:
+        """Load a textual-inversion embedding into the current pipeline."""
+        if not self._strategy:
+            raise RuntimeError("No model loaded")
+        return self._strategy.load_textual_inversion(path, token)
+
+    def attach_vae(self, path: str) -> bool:
+        """Replace the current pipeline's VAE with a single-file VAE."""
+        if not self._strategy:
+            raise RuntimeError("No model loaded")
+        return self._strategy.attach_vae(path)
+
+    def restore_vae(self) -> bool:
+        """Restore the current pipeline's original VAE."""
+        if not self._strategy:
+            return False
+        return self._strategy.restore_vae()

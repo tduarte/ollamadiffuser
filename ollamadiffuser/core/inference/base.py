@@ -168,6 +168,61 @@ class InferenceStrategy(ABC):
             logger.error(f"Failed to unload LoRA: {e}")
             return False
 
+    def load_textual_inversion(self, path: str, token: Optional[str] = None) -> bool:
+        """Load a textual-inversion embedding into the pipeline.
+
+        ``token`` is the prompt trigger word for the embedding (defaults to the
+        embedding's own stored token). No-op-safe on pipelines that don't
+        support textual inversion.
+        """
+        if not self.pipeline:
+            raise RuntimeError("Model not loaded")
+        if not hasattr(self.pipeline, "load_textual_inversion"):
+            logger.warning("This pipeline does not support textual inversion")
+            return False
+        try:
+            if token:
+                self.pipeline.load_textual_inversion(path, token=token)
+            else:
+                self.pipeline.load_textual_inversion(path)
+            logger.info(f"Loaded textual inversion from {path} (token={token})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load textual inversion: {e}")
+            return False
+
+    def attach_vae(self, path: str) -> bool:
+        """Replace the pipeline's VAE with a single-file VAE from ``path``.
+
+        Persists until the model is reloaded. The original VAE is remembered so
+        :meth:`restore_vae` can put it back.
+        """
+        if not self.pipeline:
+            raise RuntimeError("Model not loaded")
+        try:
+            from diffusers import AutoencoderKL
+
+            dtype = self._get_dtype(self.device or "cpu")
+            vae = AutoencoderKL.from_single_file(path, torch_dtype=dtype)
+            vae = vae.to(self.device)
+            if not hasattr(self, "_original_vae"):
+                self._original_vae = getattr(self.pipeline, "vae", None)
+            self.pipeline.vae = vae
+            logger.info(f"Attached VAE from {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to attach VAE: {e}")
+            return False
+
+    def restore_vae(self) -> bool:
+        """Restore the pipeline's original VAE if one was replaced."""
+        if not self.pipeline or not getattr(self, "_original_vae", None):
+            return False
+        self.pipeline.vae = self._original_vae
+        del self._original_vae
+        logger.info("Restored original VAE")
+        return True
+
     @staticmethod
     def _sanitize_image(image: Image.Image) -> Image.Image:
         """Clamp NaN/Inf pixels to avoid 'invalid value encountered in cast' on MPS."""

@@ -325,6 +325,54 @@ def test_import_local_checkpoint_in_place(tmp_path):
     assert results[0]["content_category"] == "checkpoint"
 
 
+def test_pull_embedding_uses_embedding_manager(tmp_path):
+    mgr = CivitaiManager()
+    em = MagicMock()
+    em.embedding_dir_for.return_value = tmp_path / "emb"
+    emb_json = _version_json(
+        model={"name": "Bad Hands", "type": "TextualInversion", "nsfw": False},
+        trainedWords=["badhands"])
+    with patch.object(cc, "requests") as req, \
+         patch.object(cc, "download_file") as dl, \
+         patch("ollamadiffuser.core.utils.embedding_manager.embedding_manager", em):
+        req.get.return_value = FakeResponse(json_data=emb_json)
+        req.RequestException = Exception
+        res = mgr.pull("999")
+    assert dl.called and em.register_downloaded_embedding.called
+    _, kwargs = em.register_downloaded_embedding.call_args
+    assert kwargs["token"] == "badhands"       # trigger token = first trained word
+    assert res["content_category"] == "embedding"
+
+
+def test_pull_vae_uses_vae_manager(tmp_path):
+    mgr = CivitaiManager()
+    vm = MagicMock()
+    vm.vae_dir_for.return_value = tmp_path / "vae"
+    vae_json = _version_json(model={"name": "Nice VAE", "type": "VAE", "nsfw": False})
+    with patch.object(cc, "requests") as req, \
+         patch.object(cc, "download_file") as dl, \
+         patch("ollamadiffuser.core.utils.vae_manager.vae_manager", vm):
+        req.get.return_value = FakeResponse(json_data=vae_json)
+        req.RequestException = Exception
+        res = mgr.pull("999")
+    assert dl.called and vm.register_downloaded_vae.called
+    assert res["content_category"] == "vae"
+
+
+def test_import_local_embedding_by_folder(tmp_path):
+    f = tmp_path / "embeddings" / "badhands.pt"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"emb")
+    mgr = CivitaiManager()
+    em = MagicMock()
+    with patch("ollamadiffuser.core.utils.embedding_manager.embedding_manager", em):
+        results = mgr.import_local(str(f), do_lookup=False)
+    assert em.register_downloaded_embedding.called
+    assert results[0]["content_category"] == "embedding"
+    _, kwargs = em.register_downloaded_embedding.call_args
+    assert kwargs["in_place"] is True
+
+
 def test_import_local_no_lookup_requires_flags(tmp_path):
     f = tmp_path / "mystery.safetensors"
     f.write_bytes(b"weights")

@@ -258,9 +258,18 @@ export CIVITAI_API_KEY=your_key_here
 ```
 The key stays local. On `civitai.red`, where bearer-token auth is unreliable, the client automatically falls back to a `?token=` query parameter.
 
-**MCP tools:** `search_civitai`, `download_civitai_model`, and `get_model_details` are exposed to AI assistants, and `list_models` now reports each model's type/base-model. LoRA/checkpoint **trigger words** are stored and auto-injected into prompts (toggle with `use_trigger_words`).
+`civitai pull` also handles **textual-inversion embeddings** and **VAEs**. Apply them to a running model:
 
-> **Note:** Checkpoints for **SD1.5** and **SDXL** (incl. Pony, Illustrious, NoobAI) work out of the box. **FLUX/SD3** single-file checkpoints are gated behind `--experimental` (they are often missing text encoders/VAE). Embeddings and VAEs are planned for a later phase.
+```bash
+ollamadiffuser civitai pull <embedding-url>   # then:
+ollamadiffuser embedding load <name>          # use its trigger word in prompts
+ollamadiffuser civitai pull <vae-url>         # then:
+ollamadiffuser vae load <name>                # attached until the model reloads
+```
+
+**MCP tools:** `search_civitai`, `download_civitai_model`, `get_model_details`, `load_embedding`, and `attach_vae` are exposed to AI assistants, and `list_models` now reports each model's type/base-model. LoRA/checkpoint **trigger words** are stored and auto-injected into prompts (toggle with `use_trigger_words`).
+
+> **Note:** Checkpoints for **SD1.5** and **SDXL** (incl. Pony, Illustrious, NoobAI), plus LoRAs, embeddings and VAEs, work out of the box. **FLUX/SD3** single-file checkpoints are gated behind `--experimental` (they are often missing text encoders/VAE).
 
 ---
 

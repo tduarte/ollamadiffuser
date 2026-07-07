@@ -586,10 +586,12 @@ class CivitaiManager:
         if category == "lora":
             return self._pull_lora(version, alias=alias, force=force,
                                    progress_callback=progress_callback)
-        if category in ("embedding", "vae"):
-            raise CivitaiError(
-                f"'{category}' support lands in a later phase; not yet available."
-            )
+        if category == "embedding":
+            return self._pull_embedding(version, alias=alias,
+                                        progress_callback=progress_callback)
+        if category == "vae":
+            return self._pull_vae(version, alias=alias,
+                                  progress_callback=progress_callback)
         raise CivitaiError(f"Unhandled content category: {category}")
 
     def import_local(self, path: str, *, content_type: Optional[str] = None,
@@ -696,6 +698,62 @@ class CivitaiManager:
                 "model_type": version.model_type, "path": str(target_dir),
                 "trained_words": version.trained_words}
 
+    # -- embedding ----------------------------------------------------------
+
+    def _pull_embedding(self, version: VersionInfo, *, alias: Optional[str],
+                        progress_callback: Optional[Callable]) -> Dict[str, Any]:
+        from .embedding_manager import embedding_manager
+
+        name = alias or _slugify(version.name)
+        file_info = select_primary_file(version)
+        filename = file_info.get("name") or f"{name}.pt"
+        target_dir = embedding_manager.embedding_dir_for(name)
+        dest = target_dir / filename
+
+        url = file_download_url(version.base_url, version, file_info)
+        size = int((file_info.get("sizeKB") or 0) * 1024) or None
+        if progress_callback:
+            progress_callback(f"📦 CivitAI embedding: {version.name}")
+        download_file(url, dest, base_url=version.base_url,
+                      progress_callback=progress_callback, expected_size=size,
+                      display_name=filename)
+
+        # The trigger token is the first trained word, else the slug name.
+        token = (version.trained_words[0] if version.trained_words else name)
+        embedding_manager.register_downloaded_embedding(
+            name, dest, token=token, source="civitai",
+            base_model=version.base_model, trained_words=version.trained_words)
+        logger.info("Registered CivitAI embedding '%s' (token=%s)", name, token)
+        return {"name": name, "content_category": "embedding",
+                "model_type": version.model_type, "path": str(target_dir),
+                "trained_words": version.trained_words, "token": token}
+
+    # -- vae ----------------------------------------------------------------
+
+    def _pull_vae(self, version: VersionInfo, *, alias: Optional[str],
+                  progress_callback: Optional[Callable]) -> Dict[str, Any]:
+        from .vae_manager import vae_manager
+
+        name = alias or _slugify(version.name)
+        file_info = select_primary_file(version)
+        filename = file_info.get("name") or f"{name}.safetensors"
+        target_dir = vae_manager.vae_dir_for(name)
+        dest = target_dir / filename
+
+        url = file_download_url(version.base_url, version, file_info)
+        size = int((file_info.get("sizeKB") or 0) * 1024) or None
+        if progress_callback:
+            progress_callback(f"📦 CivitAI VAE: {version.name}")
+        download_file(url, dest, base_url=version.base_url,
+                      progress_callback=progress_callback, expected_size=size,
+                      display_name=filename)
+
+        vae_manager.register_downloaded_vae(
+            name, dest, source="civitai", base_model=version.base_model)
+        logger.info("Registered CivitAI VAE '%s'", name)
+        return {"name": name, "content_category": "vae",
+                "model_type": version.model_type, "path": str(target_dir)}
+
     # -- local import -------------------------------------------------------
 
     def _import_one(self, f: Path, *, content_type: Optional[str], model_type: Optional[str],
@@ -731,11 +789,15 @@ class CivitaiManager:
             parent = f.parent.name.lower()
             if "lora" in parent:
                 category = "lora"
+            elif "embed" in parent or parent in ("ti", "textualinversion"):
+                category = "embedding"
+            elif "vae" in parent:
+                category = "vae"
             elif any(k in parent for k in ("checkpoint", "models", "stable-diffusion")):
                 category = "checkpoint"
         if category is None:
             raise CivitaiError(
-                f"could not determine type for {f.name}; pass --type checkpoint|lora")
+                f"could not determine type for {f.name}; pass --type checkpoint|lora|embedding|vae")
 
         name = alias or _slugify(f.stem)
         trained = meta.get("trained_words", [])
@@ -765,6 +827,22 @@ class CivitaiManager:
                 name, f, source=source, trained_words=trained, base_model=base_model,
                 in_place=True)
             return {"file": str(f), "name": name, "content_category": "lora",
+                    "model_type": resolved_type, "source": source}
+
+        if category == "embedding":
+            from .embedding_manager import embedding_manager
+            token = trained[0] if trained else name
+            embedding_manager.register_downloaded_embedding(
+                name, f, token=token, source=source, base_model=base_model,
+                trained_words=trained, in_place=True)
+            return {"file": str(f), "name": name, "content_category": "embedding",
+                    "model_type": resolved_type, "source": source}
+
+        if category == "vae":
+            from .vae_manager import vae_manager
+            vae_manager.register_downloaded_vae(
+                name, f, source=source, base_model=base_model, in_place=True)
+            return {"file": str(f), "name": name, "content_category": "vae",
                     "model_type": resolved_type, "source": source}
 
         raise CivitaiError(f"import of '{category}' not supported yet")

@@ -318,9 +318,46 @@ def create_mcp_server():
             lines.append(f"Trigger words: {', '.join(result['trained_words'])}")
         if category == "checkpoint":
             lines.append(f"Load and use it with: load_model('{name}') then generate_image(...).")
-        else:
-            lines.append(f"Load it onto a running model, then generate. Details: get_model_details('{name}').")
+        elif category == "lora":
+            lines.append(f"Load it onto a running model with the lora CLI, then generate.")
+        elif category == "embedding":
+            lines.append(f"Apply it with load_embedding('{name}'), then use its trigger word in prompts.")
+        elif category == "vae":
+            lines.append(f"Apply it with attach_vae('{name}') while a model is loaded.")
         return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def load_embedding(name: str) -> str:
+        """Load an installed textual-inversion embedding into the current model.
+
+        Args:
+            name: Name of an installed embedding (see list after downloading).
+        """
+        from ..core.utils.embedding_manager import embedding_manager
+
+        if not model_manager.is_model_loaded():
+            return "No model loaded. Load a model first with load_model(...)."
+        ok = await asyncio.to_thread(embedding_manager.load_embedding, name)
+        if not ok:
+            return f"Failed to load embedding '{name}' (is it installed?)."
+        info = embedding_manager.get_embedding_info(name) or {}
+        token = info.get("token")
+        hint = f" Use '{token}' in your prompt to trigger it." if token else ""
+        return f"Embedding '{name}' loaded.{hint}"
+
+    @mcp_server.tool()
+    async def attach_vae(name: str) -> str:
+        """Attach an installed VAE to the current model (until it is reloaded).
+
+        Args:
+            name: Name of an installed VAE.
+        """
+        from ..core.utils.vae_manager import vae_manager
+
+        if not model_manager.is_model_loaded():
+            return "No model loaded. Load a model first with load_model(...)."
+        ok = await asyncio.to_thread(vae_manager.attach_vae, name)
+        return f"VAE '{name}' attached." if ok else f"Failed to attach VAE '{name}'."
 
     return mcp_server
 
