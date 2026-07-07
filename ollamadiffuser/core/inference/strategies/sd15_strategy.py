@@ -1,6 +1,7 @@
 """SD 1.5 inference strategy"""
 
 import logging
+import os
 from typing import Optional
 
 import torch
@@ -36,19 +37,36 @@ class SD15Strategy(InferenceStrategy):
                 else:
                     load_kwargs["torch_dtype"] = self._get_dtype(device)
 
-            try:
-                self.pipeline = StableDiffusionPipeline.from_pretrained(
-                    model_config.path, **load_kwargs
+            params = model_config.parameters or {}
+            single_file = params.get("single_file")
+
+            if single_file:
+                # Single-file checkpoint (e.g. a CivitAI .safetensors) — mirrors
+                # the SDXL strategy. from_single_file doesn't take safety_checker
+                # or variant kwargs.
+                single_file_path = os.path.join(model_config.path, single_file)
+                sf_kwargs = {"torch_dtype": load_kwargs.get("torch_dtype", torch.float16)}
+                self.pipeline = StableDiffusionPipeline.from_single_file(
+                    single_file_path,
+                    safety_checker=None,
+                    requires_safety_checker=False,
+                    **sf_kwargs,
                 )
-            except (OSError, ValueError):
-                if "variant" in load_kwargs:
-                    logger.info(f"No {model_config.variant} variant files found, loading without variant")
-                    load_kwargs.pop("variant")
+                logger.info(f"Loaded SD 1.5 single-file checkpoint: {single_file}")
+            else:
+                try:
                     self.pipeline = StableDiffusionPipeline.from_pretrained(
                         model_config.path, **load_kwargs
                     )
-                else:
-                    raise
+                except (OSError, ValueError):
+                    if "variant" in load_kwargs:
+                        logger.info(f"No {model_config.variant} variant files found, loading without variant")
+                        load_kwargs.pop("variant")
+                        self.pipeline = StableDiffusionPipeline.from_pretrained(
+                            model_config.path, **load_kwargs
+                        )
+                    else:
+                        raise
             self._move_to_device(device)
             self._apply_memory_optimizations()
 

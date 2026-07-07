@@ -131,16 +131,46 @@ class InferenceStrategy(ABC):
     def load_lora_runtime(
         self, repo_id: str, weight_name: str = None, scale: float = 1.0
     ) -> bool:
-        """Load LoRA weights at runtime"""
+        """Load LoRA weights at runtime.
+
+        Some community (kohya) LoRAs trip diffusers' text-encoder loader with an
+        IndexError in get_peft_kwargs. When that happens we fall back to loading
+        the UNet weights only — that carries the visual concept, and only the
+        (usually minor) text-encoder adjustment is dropped.
+        """
         if not self.pipeline:
             raise RuntimeError("Model not loaded")
         try:
-            if weight_name:
-                self.pipeline.load_lora_weights(repo_id, weight_name=weight_name)
-            else:
-                self.pipeline.load_lora_weights(repo_id)
-            if hasattr(self.pipeline, "set_adapters") and scale != 1.0:
-                self.pipeline.set_adapters(["default"], adapter_weights=[scale])
+            # Replace any previously-loaded LoRA so switching LoRAs works
+            # (peft errors if the 'default' adapter already exists).
+            if self.current_lora:
+                self.unload_lora()
+            try:
+                if weight_name:
+                    self.pipeline.load_lora_weights(repo_id, weight_name=weight_name)
+                else:
+                    self.pipeline.load_lora_weights(repo_id)
+            except (IndexError, ValueError, KeyError) as e:
+                unet_sd = self._lora_unet_state_dict(repo_id, weight_name)
+                if not unet_sd:
+                    raise
+                logger.warning(
+                    f"Full LoRA load failed ({type(e).__name__}: {e}); "
+                    "retrying with UNet weights only (text-encoder part skipped)"
+                )
+                self.pipeline.load_lora_weights(unet_sd, adapter_name="default")
+            # Apply the requested scale. diffusers auto-names the adapter
+            # (often "default_0", not "default"), so resolve the real name and
+            # treat a scaling failure as non-fatal — the LoRA is already loaded.
+            if scale != 1.0 and hasattr(self.pipeline, "set_adapters"):
+                try:
+                    names = None
+                    if hasattr(self.pipeline, "get_active_adapters"):
+                        names = self.pipeline.get_active_adapters()
+                    names = names or ["default"]
+                    self.pipeline.set_adapters(names, adapter_weights=[scale] * len(names))
+                except Exception as e:
+                    logger.warning(f"Loaded LoRA but could not apply scale {scale}: {e}")
             self.current_lora = {
                 "repo_id": repo_id,
                 "weight_name": weight_name,
@@ -152,6 +182,28 @@ class InferenceStrategy(ABC):
         except Exception as e:
             logger.error(f"Failed to load LoRA: {e}")
             return False
+
+    @staticmethod
+    def _lora_unet_state_dict(repo_id: str, weight_name: str = None):
+        """Load only the UNet tensors of a local kohya-format .safetensors LoRA.
+
+        Returns None for non-local sources or non-safetensors files, so the
+        caller re-raises the original error rather than silently no-op'ing.
+        """
+        from pathlib import Path
+
+        path = Path(repo_id)
+        if weight_name:
+            path = path / weight_name
+        if not path.is_file() or path.suffix != ".safetensors":
+            return None
+        try:
+            from safetensors.torch import load_file
+
+            raw = load_file(str(path))
+        except Exception:
+            return None
+        return {k: v for k, v in raw.items() if k.startswith("lora_unet")}
 
     def unload_lora(self) -> bool:
         """Unload LoRA weights"""
@@ -167,6 +219,61 @@ class InferenceStrategy(ABC):
         except Exception as e:
             logger.error(f"Failed to unload LoRA: {e}")
             return False
+
+    def load_textual_inversion(self, path: str, token: Optional[str] = None) -> bool:
+        """Load a textual-inversion embedding into the pipeline.
+
+        ``token`` is the prompt trigger word for the embedding (defaults to the
+        embedding's own stored token). No-op-safe on pipelines that don't
+        support textual inversion.
+        """
+        if not self.pipeline:
+            raise RuntimeError("Model not loaded")
+        if not hasattr(self.pipeline, "load_textual_inversion"):
+            logger.warning("This pipeline does not support textual inversion")
+            return False
+        try:
+            if token:
+                self.pipeline.load_textual_inversion(path, token=token)
+            else:
+                self.pipeline.load_textual_inversion(path)
+            logger.info(f"Loaded textual inversion from {path} (token={token})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load textual inversion: {e}")
+            return False
+
+    def attach_vae(self, path: str) -> bool:
+        """Replace the pipeline's VAE with a single-file VAE from ``path``.
+
+        Persists until the model is reloaded. The original VAE is remembered so
+        :meth:`restore_vae` can put it back.
+        """
+        if not self.pipeline:
+            raise RuntimeError("Model not loaded")
+        try:
+            from diffusers import AutoencoderKL
+
+            dtype = self._get_dtype(self.device or "cpu")
+            vae = AutoencoderKL.from_single_file(path, torch_dtype=dtype)
+            vae = vae.to(self.device)
+            if not hasattr(self, "_original_vae"):
+                self._original_vae = getattr(self.pipeline, "vae", None)
+            self.pipeline.vae = vae
+            logger.info(f"Attached VAE from {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to attach VAE: {e}")
+            return False
+
+    def restore_vae(self) -> bool:
+        """Restore the pipeline's original VAE if one was replaced."""
+        if not self.pipeline or not getattr(self, "_original_vae", None):
+            return False
+        self.pipeline.vae = self._original_vae
+        del self._original_vae
+        logger.info("Restored original VAE")
+        return True
 
     @staticmethod
     def _sanitize_image(image: Image.Image) -> Image.Image:

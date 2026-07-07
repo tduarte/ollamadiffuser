@@ -45,7 +45,7 @@ class TestMCPServerCreation:
             assert server is not None
             assert server.name == "OllamaDiffuser"
 
-    def test_server_has_four_tools(self, mock_model_manager):
+    def test_server_registers_expected_tools(self, mock_model_manager):
         with patch(
             "ollamadiffuser.mcp.server.model_manager", mock_model_manager
         ):
@@ -53,11 +53,22 @@ class TestMCPServerCreation:
 
             server = create_mcp_server()
             tools = server._tool_manager._tools
-            assert "generate_image" in tools
-            assert "list_models" in tools
-            assert "load_model" in tools
-            assert "get_status" in tools
-            assert len(tools) == 4
+            for expected in (
+                "generate_image",
+                "list_models",
+                "load_model",
+                "get_status",
+                "get_model_details",
+                "search_civitai",
+                "download_civitai_model",
+                "list_loras",
+                "find_loras",
+                "apply_lora",
+                "load_embedding",
+                "attach_vae",
+            ):
+                assert expected in tools
+            assert len(tools) == 12
 
 
 @MCP_SKIP
@@ -69,7 +80,7 @@ class TestListModelsTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("list_models", {})
             )
             text = content[0].text
@@ -88,7 +99,7 @@ class TestGetStatusTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("get_status", {})
             )
             text = content[0].text
@@ -111,7 +122,7 @@ class TestGetStatusTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("get_status", {})
             )
             text = content[0].text
@@ -129,7 +140,7 @@ class TestLoadModelTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("load_model", {"model_name": "nonexistent"})
             )
             text = content[0].text
@@ -145,7 +156,7 @@ class TestLoadModelTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("load_model", {"model_name": "dreamshaper"})
             )
             text = content[0].text
@@ -164,6 +175,6 @@ class TestGenerateImageTool:
 
             server = create_mcp_server()
             with pytest.raises(ToolError, match="No model loaded"):
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     server.call_tool("generate_image", {"prompt": "test"})
                 )

@@ -167,3 +167,10 @@ def show(lora_name: str):
     rprint(f"Path: {info.get('path', 'Unknown')}")
     rprint(f"Size: {info.get('size', 'Unknown')}")
     rprint(f"Downloaded: {info.get('downloaded_at', 'Unknown')}")
+    if info.get("source"):
+        rprint(f"Source: {info['source']}")
+    if info.get("base_model"):
+        rprint(f"Base model: {info['base_model']}")
+    trigger = info.get("trained_words")
+    if trigger:
+        rprint(f"[yellow]Trigger words:[/yellow] {', '.join(trigger)}")

@@ -86,6 +86,18 @@ from .lora_commands import lora
 
 cli.add_command(lora)
 
+# --- Register CivitAI commands ---
+from .civitai_commands import civitai
+
+cli.add_command(civitai)
+
+# --- Register embedding & VAE commands ---
+from .embedding_commands import embedding
+from .vae_commands import vae
+
+cli.add_command(embedding)
+cli.add_command(vae)
+
 # --- Register registry commands ---
 from .registry_commands import registry
 
