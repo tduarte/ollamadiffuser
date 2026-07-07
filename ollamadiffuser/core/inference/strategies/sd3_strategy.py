@@ -81,6 +81,10 @@ class SD3Strategy(InferenceStrategy):
             "generator": generator,
         }
 
+        step_cb = self._diffusers_step_callback(kwargs.get("progress_callback"), steps)
+        if step_cb is not None:
+            gen_kwargs["callback_on_step_end"] = step_cb
+
         try:
             logger.info(f"Generating SD3 image: steps={steps}, guidance={guidance}, seed={used_seed}")
             output = self.pipeline(**gen_kwargs)

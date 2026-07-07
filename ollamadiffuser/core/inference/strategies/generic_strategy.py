@@ -165,6 +165,18 @@ class GenericPipelineStrategy(InferenceStrategy):
             if key in kwargs:
                 gen_kwargs[key] = kwargs[key]
 
+        # Per-step progress — only if this arbitrary pipeline accepts the hook.
+        step_cb = self._diffusers_step_callback(kwargs.get("progress_callback"), steps)
+        if step_cb is not None:
+            try:
+                import inspect
+                accepts = "callback_on_step_end" in inspect.signature(
+                    self.pipeline.__call__).parameters
+            except (TypeError, ValueError):
+                accepts = False
+            if accepts:
+                gen_kwargs["callback_on_step_end"] = step_cb
+
         try:
             logger.info(
                 f"Generating with {type(self.pipeline).__name__}: "
@@ -177,7 +189,7 @@ class GenericPipelineStrategy(InferenceStrategy):
             # Some pipelines don't accept all standard params (e.g., width/height)
             # Retry without optional params
             logger.warning(f"Pipeline call failed: {e}. Retrying with minimal params.")
-            for key in ("width", "height", "negative_prompt"):
+            for key in ("width", "height", "negative_prompt", "callback_on_step_end"):
                 gen_kwargs.pop(key, None)
             output = self.pipeline(**gen_kwargs)
             image = output.images[0]

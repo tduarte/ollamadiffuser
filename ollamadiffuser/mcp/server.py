@@ -74,7 +74,7 @@ def _ensure_mcp():
 
 def create_mcp_server():
     """Create and configure the MCP server with all tools."""
-    from mcp.server.fastmcp import FastMCP, Image
+    from mcp.server.fastmcp import Context, FastMCP, Image
 
     mcp_server = FastMCP(
         "OllamaDiffuser",
@@ -134,8 +134,15 @@ def create_mcp_server():
         seed: Optional[int] = None,
         use_trigger_words: bool = True,
         avoid_anatomy_errors: bool = True,
+        ctx: Context = None,
     ) -> Image:
-        """Generate an image from a text prompt using a local diffusion model.
+        """Generate an image from a local diffusion model; returns the finished image.
+
+        This call blocks until the image is fully rendered. Progress steps count
+        the denoising loop and are followed by a "Decoding image…" (VAE) phase
+        that has no step count — reaching the last step (e.g. 30/30) does NOT mean
+        it is done. Always wait for this tool to return the image; do not assume
+        completion from the progress messages.
 
         If `prompt` is short or vague, first expand it into a detailed prompt
         (subject + attributes, action, setting, composition, lighting, color,
@@ -192,6 +199,28 @@ def create_mcp_server():
                 logger.info(f"Injected trigger words: {missing}")
 
         engine = model_manager.loaded_model
+        # Per-step progress -> MCP progress notifications. Generation runs in a
+        # worker thread; the callback fires there, so we hop back to the event
+        # loop with run_coroutine_threadsafe. Fire-and-forget (never block the
+        # denoise loop on the notification). report_progress is a no-op unless
+        # the client sent a progressToken. A progress notification also signals
+        # "still working", which MCP clients use to reset request timeouts.
+        progress_callback = None
+        if ctx is not None:
+            loop = asyncio.get_running_loop()
+
+            def progress_callback(step, total, message=None):
+                try:
+                    fut = asyncio.run_coroutine_threadsafe(
+                        ctx.report_progress(
+                            progress=step, total=total,
+                            message=message or f"Step {step}/{total}"),
+                        loop,
+                    )
+                    fut.add_done_callback(lambda f: f.exception())
+                except Exception:
+                    pass
+
         result = await asyncio.to_thread(
             engine.generate_image,
             prompt=prompt,
@@ -201,6 +230,7 @@ def create_mcp_server():
             width=width,
             height=height,
             seed=seed,
+            progress_callback=progress_callback,
         )
 
         buf = io.BytesIO()

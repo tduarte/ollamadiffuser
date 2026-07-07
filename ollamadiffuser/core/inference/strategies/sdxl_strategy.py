@@ -130,6 +130,11 @@ class SDXLStrategy(InferenceStrategy):
             "generator": generator,
         }
 
+        # Shared across txt2img/img2img/inpaint below (all consume gen_kwargs).
+        step_cb = self._diffusers_step_callback(kwargs.get("progress_callback"), steps)
+        if step_cb is not None:
+            gen_kwargs["callback_on_step_end"] = step_cb
+
         try:
             if image is not None and mask_image is not None:
                 return self._inpaint(gen_kwargs, image, mask_image, strength)

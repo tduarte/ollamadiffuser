@@ -6,6 +6,7 @@ mock the mflux model class so no weights need to download.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,7 @@ from ollamadiffuser.core.inference.strategies import mlx_strategy
 from ollamadiffuser.core.inference.strategies.mlx_strategy import (
     MLXStrategy,
     SUPPORTED_MLX_VARIANTS,
+    _MfluxProgress,
     is_apple_silicon,
 )
 
@@ -296,6 +298,43 @@ class TestLoadAndGenerate:
         assert s.is_loaded
         assert s.device == "mps"
         assert s._variant == "flux1"
+
+    def test_mflux_import_and_construct_share_one_nonmain_thread(self):
+        """Regression: the mflux import (``_resolve_model_and_config``) and model
+        construction must run on the SAME worker thread, and that thread must not
+        be the main thread.
+
+        MLX creates its Metal GPU stream on the thread that first imports it. If
+        the import happens on the main thread but construction/generation run on
+        the strategy's worker thread, the worker has no ``Stream(gpu, 0)`` and
+        mflux aborts the whole process during VAE decode ("There is no
+        Stream(gpu, 0) in current thread"). Keeping import + construction on one
+        worker thread is the fix.
+        """
+        import threading
+
+        seen = {}
+        cls_mock, _, cfg_mock = _stub_resolution()
+
+        def rec_resolve(variant, name):
+            seen["resolve"] = threading.get_ident()
+            return (cls_mock, cfg_mock)
+
+        def rec_construct(model_cls, mflux_config, quantize,
+                          lora_paths=None, lora_scales=None):
+            seen["construct"] = threading.get_ident()
+            return model_cls(quantize=quantize, model_config=mflux_config)
+
+        s = MLXStrategy()
+        with patch.object(MLXStrategy, "_resolve_model_and_config", rec_resolve), \
+             patch.object(MLXStrategy, "_construct_mlx_model", rec_construct):
+            assert s.load(_make_config(), device="mps") is True
+
+        assert "resolve" in seen and "construct" in seen
+        # Import and construction ran on the same thread ...
+        assert seen["resolve"] == seen["construct"]
+        # ... and it was NOT the main thread (where MLX must never be imported).
+        assert seen["resolve"] != threading.get_ident()
 
     def test_load_reports_failure_on_mflux_import_error(self):
         s = MLXStrategy()
@@ -612,3 +651,75 @@ class TestBackendInfo:
         info = s.get_info()
         assert info["backend"] == "mlx"
         assert info["mflux_variant"] == "flux1"
+
+
+# --------------------------------------------------------------------------
+# Per-step progress (mflux callback registry) — uses fakes, runs anywhere
+# --------------------------------------------------------------------------
+
+class _FakeRegistry:
+    def __init__(self):
+        self.in_loop = []
+        self.after_loop = []
+
+    def register(self, cb):
+        if hasattr(cb, "call_in_loop"):
+            self.in_loop.append(cb)
+        if hasattr(cb, "call_after_loop"):
+            self.after_loop.append(cb)
+
+
+class _FakeMLXModel:
+    def __init__(self):
+        self.callbacks = _FakeRegistry()
+
+    def generate_image(self, seed, prompt, num_inference_steps=4, height=1024,
+                       width=1024, guidance=0.0, **kw):
+        return SimpleNamespace(image=Image.new("RGB", (8, 8)))
+
+
+class TestMLXProgress:
+    def _strategy(self):
+        s = MLXStrategy()
+        s._mlx_model = _FakeMLXModel()
+        s._variant = "qwen-image"
+        s.device = "mps"
+        s.model_config = _make_config(parameters={
+            "mlx_variant": "qwen-image", "mlx_model_name": "qwen-image",
+            "quantize": 8, "num_inference_steps": 8, "guidance_scale": 4.0,
+        })
+        return s
+
+    def test_registers_progress_callback_and_reports_1based(self):
+        s = self._strategy()
+        seen = []
+        s.generate(prompt="x", num_inference_steps=8,
+                   progress_callback=lambda step, total, message=None: seen.append(
+                       (step, total, message)))
+        in_regs = [c for c in s._mlx_model.callbacks.in_loop if isinstance(c, _MfluxProgress)]
+        after_regs = [c for c in s._mlx_model.callbacks.after_loop if isinstance(c, _MfluxProgress)]
+        assert len(in_regs) == 1
+        assert len(after_regs) == 1  # decode-phase reporter
+        config = SimpleNamespace(num_inference_steps=8)
+        # Per-step hook: 1-based step, no message.
+        in_regs[0].call_in_loop(t=0, seed=1, prompt="x", latents=None,
+                                config=config, time_steps=None)
+        # After-loop hook: signals the VAE decode phase with a message.
+        after_regs[0].call_after_loop(seed=1, prompt="x", latents=None, config=config)
+        assert seen == [(1, 8, None), (8, 8, "Decoding image…")]
+
+    def test_no_duplicate_registration_across_calls(self):
+        s = self._strategy()
+        for _ in range(3):
+            s.generate(prompt="x", num_inference_steps=8,
+                       progress_callback=lambda step, total, message=None: None)
+        in_regs = [c for c in s._mlx_model.callbacks.in_loop if isinstance(c, _MfluxProgress)]
+        after_regs = [c for c in s._mlx_model.callbacks.after_loop if isinstance(c, _MfluxProgress)]
+        assert len(in_regs) == 1
+        assert len(after_regs) == 1
+
+    def test_no_registration_without_callback(self):
+        s = self._strategy()
+        s.generate(prompt="x", num_inference_steps=8)
+        regs = [c for c in s._mlx_model.callbacks.in_loop if isinstance(c, _MfluxProgress)]
+        assert len(regs) == 0
