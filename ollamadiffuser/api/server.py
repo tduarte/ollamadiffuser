@@ -224,7 +224,7 @@ def create_app() -> FastAPI:
             return _image_to_response(image)
         except Exception as e:
             logger.error(f"Generation failed: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Image generation failed")
+            raise HTTPException(status_code=500, detail=f"Image generation failed: {e}")
 
     @app.post("/api/generate/img2img")
     async def generate_img2img(
@@ -358,10 +358,20 @@ def create_app() -> FastAPI:
             )
             if success:
                 return {"message": f"LoRA {request.lora_name} loaded (scale={request.scale})"}
-            raise HTTPException(status_code=400, detail="Failed to load LoRA")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Failed to load LoRA '{request.lora_name}'. The backend could not "
+                    f"apply weights from repo_id={request.repo_id!r} "
+                    f"(weight_name={request.weight_name!r}). For MLX models the weight must "
+                    "resolve to a local .safetensors file."
+                ),
+            )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"LoRA load failed: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Failed to load LoRA")
+            raise HTTPException(status_code=500, detail=f"Failed to load LoRA: {e}")
 
     @app.post("/api/lora/unload")
     async def unload_lora():

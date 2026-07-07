@@ -27,6 +27,7 @@ Tracking issue: https://github.com/LocalKinAI/ollamadiffuser/issues/7
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import platform
 import random
@@ -118,6 +119,27 @@ class MLXStrategy(InferenceStrategy):
         self._mlx_model = None
         # Cached for capability checks in generate() (e.g. Kontext needs image).
         self._variant: Optional[str] = None
+        # Dedicated single worker thread for ALL mflux/MLX work. Metal streams
+        # are thread-affine: MLX creates its GPU stream on the thread that first
+        # touches the model, and using it from another thread raises
+        # "There is no Stream(gpu, N) in current thread." The API server and MCP
+        # run generation via asyncio.to_thread (a pool of worker threads), so
+        # without pinning, build and generate can land on different threads and
+        # fail intermittently. Routing every mflux call through one thread keeps
+        # construction, generation, and LoRA reloads on the same Metal stream.
+        self._executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+    def _run(self, fn, *args, **kwargs):
+        """Run an mflux/MLX callable on the strategy's dedicated worker thread.
+
+        Blocks for the result (re-raising any exception on the caller), so the
+        call site behaves synchronously while the actual Metal work always
+        executes on one consistent thread. See ``__init__`` for why.
+        """
+        if self._executor is None:
+            self._executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="mlx")
+        return self._executor.submit(lambda: fn(*args, **kwargs)).result()
 
     # ----- Loading ------------------------------------------------------
 
@@ -174,8 +196,8 @@ class MLXStrategy(InferenceStrategy):
             f"(quantize={quantize})..."
         )
         try:
-            self._mlx_model = self._construct_mlx_model(
-                model_cls, mflux_config, quantize)
+            self._mlx_model = self._run(
+                self._construct_mlx_model, model_cls, mflux_config, quantize)
         except Exception as e:
             logger.error(f"Failed to load MLX model: {e}", exc_info=True)
             return False
@@ -461,7 +483,7 @@ class MLXStrategy(InferenceStrategy):
             f"size={width}x{height}"
         )
         try:
-            generated = self._mlx_model.generate_image(**gen_kwargs)
+            generated = self._run(self._mlx_model.generate_image, **gen_kwargs)
             # generated is mflux.utils.generated_image.GeneratedImage; .image is PIL.
             return self._sanitize_image(generated.image)
         except Exception as e:
@@ -507,6 +529,9 @@ class MLXStrategy(InferenceStrategy):
         self.model_config = None
         self.current_lora = None
         self._variant = None
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
+            self._executor = None
         logger.info("MLX model unloaded")
 
     # ----- LoRA (construction-time, via transparent reload) -------------
@@ -582,8 +607,8 @@ class MLXStrategy(InferenceStrategy):
         mlx_model_name = params.get("mlx_model_name")
         quantize = params.get("quantize")
         model_cls, mflux_config = self._resolve_model_and_config(variant, mlx_model_name)
-        return self._construct_mlx_model(
-            model_cls, mflux_config, quantize,
+        return self._run(
+            self._construct_mlx_model, model_cls, mflux_config, quantize,
             lora_paths=lora_paths, lora_scales=lora_scales)
 
     @staticmethod

@@ -501,6 +501,42 @@ class TestResolveLoRAFile:
         assert MLXStrategy._resolve_lora_file(str(tmp_path)) is None
 
 
+class TestThreadPinning:
+    """All mflux/MLX work must run on ONE dedicated thread (Metal streams are
+    thread-affine), even when callers invoke from different pool threads — as
+    the API server / MCP do via asyncio.to_thread."""
+
+    def test_run_uses_single_named_worker_thread(self):
+        import threading
+
+        s = MLXStrategy()
+        names = []
+        s._run(lambda: names.append(threading.current_thread().name))
+        s._run(lambda: names.append(threading.current_thread().name))
+        # Invoke from a *different* caller thread — must still pin to one worker.
+        t = threading.Thread(
+            target=lambda: s._run(lambda: names.append(threading.current_thread().name)))
+        t.start()
+        t.join()
+        assert all(n.startswith("mlx") for n in names)  # the dedicated pool
+        assert len(set(names)) == 1                       # always the same thread
+        assert names[0] != threading.current_thread().name  # not the caller's
+        s.unload()
+
+    def test_run_propagates_exceptions_to_caller(self):
+        s = MLXStrategy()
+        with pytest.raises(ValueError, match="boom"):
+            s._run(lambda: (_ for _ in ()).throw(ValueError("boom")))
+        s.unload()
+
+    def test_unload_shuts_down_executor(self):
+        s = MLXStrategy()
+        s._run(lambda: None)
+        assert s._executor is not None
+        s.unload()
+        assert s._executor is None
+
+
 @pytest.mark.skipif(not is_apple_silicon(), reason="MLX only runs on Apple Silicon")
 class TestLoRA:
     def test_load_lora_reloads_model_with_lora_paths(self, tmp_path):
