@@ -36,3 +36,27 @@ def test_is_installed_and_get_info_tolerant():
     assert m.is_lora_installed("Pony Realism") is True
     assert m.get_lora_info("pony realism")["base_model"] == "Pony"
     assert m.is_lora_installed("nope") is False
+
+
+def test_lora_unet_only_filter(tmp_path):
+    """The UNet-only fallback keeps lora_unet_* and drops text-encoder tensors."""
+    import torch
+    from safetensors.torch import save_file
+    from ollamadiffuser.core.inference.base import InferenceStrategy
+
+    p = tmp_path / "x.safetensors"
+    save_file({
+        "lora_unet_down_blocks_0.lora_down.weight": torch.zeros(2, 2),
+        "lora_unet_down_blocks_0.lora_up.weight": torch.zeros(2, 2),
+        "lora_te1_text_model.lora_down.weight": torch.zeros(2, 2),
+        "lora_te2_text_model.lora_down.weight": torch.zeros(2, 2),
+    }, str(p))
+
+    sd = InferenceStrategy._lora_unet_state_dict(str(tmp_path), "x.safetensors")
+    assert set(sd) == {
+        "lora_unet_down_blocks_0.lora_down.weight",
+        "lora_unet_down_blocks_0.lora_up.weight",
+    }
+    # Non-local / non-safetensors sources return None so the caller re-raises.
+    assert InferenceStrategy._lora_unet_state_dict(str(tmp_path), "missing.safetensors") is None
+    assert InferenceStrategy._lora_unet_state_dict("org/repo", None) is None

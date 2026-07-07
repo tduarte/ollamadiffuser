@@ -131,14 +131,34 @@ class InferenceStrategy(ABC):
     def load_lora_runtime(
         self, repo_id: str, weight_name: str = None, scale: float = 1.0
     ) -> bool:
-        """Load LoRA weights at runtime"""
+        """Load LoRA weights at runtime.
+
+        Some community (kohya) LoRAs trip diffusers' text-encoder loader with an
+        IndexError in get_peft_kwargs. When that happens we fall back to loading
+        the UNet weights only — that carries the visual concept, and only the
+        (usually minor) text-encoder adjustment is dropped.
+        """
         if not self.pipeline:
             raise RuntimeError("Model not loaded")
         try:
-            if weight_name:
-                self.pipeline.load_lora_weights(repo_id, weight_name=weight_name)
-            else:
-                self.pipeline.load_lora_weights(repo_id)
+            # Replace any previously-loaded LoRA so switching LoRAs works
+            # (peft errors if the 'default' adapter already exists).
+            if self.current_lora:
+                self.unload_lora()
+            try:
+                if weight_name:
+                    self.pipeline.load_lora_weights(repo_id, weight_name=weight_name)
+                else:
+                    self.pipeline.load_lora_weights(repo_id)
+            except (IndexError, ValueError, KeyError) as e:
+                unet_sd = self._lora_unet_state_dict(repo_id, weight_name)
+                if not unet_sd:
+                    raise
+                logger.warning(
+                    f"Full LoRA load failed ({type(e).__name__}: {e}); "
+                    "retrying with UNet weights only (text-encoder part skipped)"
+                )
+                self.pipeline.load_lora_weights(unet_sd, adapter_name="default")
             if hasattr(self.pipeline, "set_adapters") and scale != 1.0:
                 self.pipeline.set_adapters(["default"], adapter_weights=[scale])
             self.current_lora = {
@@ -152,6 +172,28 @@ class InferenceStrategy(ABC):
         except Exception as e:
             logger.error(f"Failed to load LoRA: {e}")
             return False
+
+    @staticmethod
+    def _lora_unet_state_dict(repo_id: str, weight_name: str = None):
+        """Load only the UNet tensors of a local kohya-format .safetensors LoRA.
+
+        Returns None for non-local sources or non-safetensors files, so the
+        caller re-raises the original error rather than silently no-op'ing.
+        """
+        from pathlib import Path
+
+        path = Path(repo_id)
+        if weight_name:
+            path = path / weight_name
+        if not path.is_file() or path.suffix != ".safetensors":
+            return None
+        try:
+            from safetensors.torch import load_file
+
+            raw = load_file(str(path))
+        except Exception:
+            return None
+        return {k: v for k, v in raw.items() if k.startswith("lora_unet")}
 
     def unload_lora(self) -> bool:
         """Unload LoRA weights"""
