@@ -73,7 +73,7 @@ def search(query: str, model_type: Optional[str], base_model: Optional[str],
         table.add_row(*cells)
     console.print(table)
     rprint("[dim]LoRA:[/dim] ollamadiffuser hf pull <Repo ID> [--weight-name <f>]")
-    rprint("[dim]Model:[/dim] ollamadiffuser hf pull <Repo ID> --as-model --type <flux|sdxl|...>")
+    rprint("[dim]Model:[/dim] ollamadiffuser hf pull <Repo ID> --as-model --type <flux|sdxl|sd3|qwen|...>")
 
 
 @huggingface.command()
@@ -113,7 +113,7 @@ def info(repo_id: str):
 @click.option("--as-model", "as_model", is_flag=True,
               help="Install a full diffusers model (into the registry) instead of a LoRA.")
 @click.option("--type", "-t", "model_type",
-              type=click.Choice(["flux", "sdxl", "sd15", "sd3", "mlx"]),
+              type=click.Choice(["flux", "sdxl", "sd15", "sd3", "mlx", "qwen"]),
               help="Model type (required with --as-model).")
 @click.option("--variant", help="Model variant (with --as-model), e.g. 'fp16'.")
 @click.option("--force", "-f", is_flag=True, help="Re-download even if already installed.")
@@ -125,7 +125,7 @@ def pull(repo_id: str, weight_name: Optional[str], alias: Optional[str],
     """
     if as_model:
         if not model_type:
-            rprint("[red]--as-model requires --type (flux, sdxl, sd15, sd3, mlx).[/red]")
+            rprint("[red]--as-model requires --type (flux, sdxl, sd15, sd3, mlx, qwen).[/red]")
             sys.exit(1)
         rprint(f"[blue]Installing Hugging Face model: {repo_id}[/blue]")
         try:

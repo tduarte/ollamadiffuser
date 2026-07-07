@@ -56,6 +56,14 @@ _PIPELINE_ALLOW_PATTERNS = {
         "transformer/*",
         "vae/*",
     ],
+    # Single-file Qwen-Image transformer checkpoints: grab the .safetensors and
+    # any config, skip everything else. Base pipeline components are fetched from
+    # the base repo at load time (see QwenImageStrategy).
+    "qwen": [
+        "*.safetensors",
+        "*.json",
+        "*.txt",
+    ],
 }
 
 # Default files to skip for all non-GGUF models.

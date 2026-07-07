@@ -66,6 +66,36 @@
         "supported_devices": ["CUDA", "MPS", "CPU"],
         "performance_notes": "Pruned and optimized SD 1.5 for low-resource environments"
       }
+    },
+
+    "custom-qwen-image": {
+      "repo_id": "my-username/my-qwen-image-checkpoint",
+      "model_type": "qwen",
+      "parameters": {
+        "num_inference_steps": 30,
+        "true_cfg_scale": 4.0,
+        "lightning": false,
+        "base_repo": "Qwen/Qwen-Image",
+        "pipeline_class": "QwenImagePipeline",
+        "single_file": null,
+        "text_encoder_repo": null,
+        "tokenizer_repo": null,
+        "text_encoder_class": "Qwen2_5_VLForConditionalGeneration"
+      },
+      "hardware_requirements": {
+        "min_vram_gb": 40,
+        "recommended_vram_gb": 64,
+        "min_ram_gb": 48,
+        "recommended_ram_gb": 96,
+        "disk_space_gb": 60,
+        "supported_devices": ["CUDA", "MPS"],
+        "performance_notes": "Single-file Qwen-Image transformer .safetensors, assembled onto base Qwen/Qwen-Image components at load time. Qwen-Image is driven by true_cfg_scale (not guidance_scale). Full-bf16 weights need ~60GB+ unified memory on MPS; a quantized checkpoint needs less. Set text_encoder_repo to swap in a custom (e.g. uncensored) Qwen2.5-VL-COMPATIBLE encoder; single_file names the checkpoint when the repo has more than one .safetensors. Set lightning:true for distilled few-step checkpoints (defaults 8 steps / true_cfg_scale 1.0); auto-inferred from the name/filename when omitted."
+      },
+      "license_info": {
+        "type": "Apache 2.0",
+        "requires_agreement": false,
+        "commercial_use": true
+      }
     }
   }
-} 
+}

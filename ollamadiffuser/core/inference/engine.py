@@ -43,6 +43,10 @@ def _get_strategy(model_type: str) -> InferenceStrategy:
     elif model_type == "gguf":
         from .strategies.gguf_strategy import GGUFStrategy
         return GGUFStrategy()
+    elif model_type == "qwen":
+        # Single-file Qwen-Image checkpoint assembled onto base repo components.
+        from .strategies.qwen_strategy import QwenImageStrategy
+        return QwenImageStrategy()
     elif model_type == "generic":
         from .strategies.generic_strategy import GenericPipelineStrategy
         return GenericPipelineStrategy()
