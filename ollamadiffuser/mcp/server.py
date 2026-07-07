@@ -95,6 +95,22 @@ def create_mcp_server():
             "generate_image. generate_image auto-injects the loaded model's and LoRA's trigger "
             "words. For Pony-based SDXL checkpoints, also prepend 'score_9, score_8_up, score_7_up' "
             "to the prompt for good quality.\n"
+            "PROMPT QUALITY: before generating, if the user's prompt is short or vague (e.g. "
+            "'a cat', 'a warrior'), first ENRICH it into a detailed prompt — a well-specified "
+            "prompt improves results more than any parameter. Preserve the user's intent and any "
+            "details they gave; never swap in a different subject. Work through this framework, "
+            "adding what fits (skip what the user clearly doesn't want): (1) subject + key "
+            "attributes (age, species/material, expression, clothing); (2) action/pose (dynamic vs "
+            "static); (3) environment/setting (location, background, time period); (4) composition "
+            "(shot type — close-up/wide/aerial, camera angle, framing, rule of thirds); (5) "
+            "lighting (direction, soft/hard, source e.g. golden hour/studio/neon, mood); (6) color "
+            "palette (dominant tones, contrast, saturation); (7) style/medium (photograph, oil "
+            "painting, 3D render, anime, or a specific artist/era); (8) for photoreal, camera/lens "
+            "(focal length, depth of field, film grain, aspect ratio); (9) mood/atmosphere; (10) "
+            "detail/quality tags ('highly detailed', 'sharp focus', '8k') — these help some models "
+            "more than others. Keep model/LoRA trigger words at the front. Briefly tell the user "
+            "the enhanced prompt you used. If the user gave an already-detailed prompt or asked for "
+            "exact wording, use it verbatim.\n"
             "ANATOMY REVIEW: after each generate_image, LOOK AT the returned image and check "
             "hands/fingers (count + shape), limbs, eyes and faces — these are where diffusion "
             "models fail most. If you see extra/fused fingers, malformed hands, extra limbs or "
@@ -120,6 +136,12 @@ def create_mcp_server():
         avoid_anatomy_errors: bool = True,
     ) -> Image:
         """Generate an image from a text prompt using a local diffusion model.
+
+        If `prompt` is short or vague, first expand it into a detailed prompt
+        (subject + attributes, action, setting, composition, lighting, color,
+        style/medium, mood, quality tags) while preserving the user's intent —
+        see the PROMPT QUALITY guidance in the server instructions. A
+        well-specified prompt improves results more than any parameter here.
 
         After generating, LOOK AT the returned image and check anatomy —
         hands/fingers (count and shape), limbs, eyes, faces. If something is
