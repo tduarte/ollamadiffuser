@@ -77,7 +77,7 @@ class TestListModelsTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("list_models", {})
             )
             text = content[0].text
@@ -96,7 +96,7 @@ class TestGetStatusTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("get_status", {})
             )
             text = content[0].text
@@ -119,7 +119,7 @@ class TestGetStatusTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("get_status", {})
             )
             text = content[0].text
@@ -137,7 +137,7 @@ class TestLoadModelTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("load_model", {"model_name": "nonexistent"})
             )
             text = content[0].text
@@ -153,7 +153,7 @@ class TestLoadModelTool:
             from ollamadiffuser.mcp.server import create_mcp_server
 
             server = create_mcp_server()
-            content, _ = asyncio.get_event_loop().run_until_complete(
+            content, _ = asyncio.run(
                 server.call_tool("load_model", {"model_name": "dreamshaper"})
             )
             text = content[0].text
@@ -172,6 +172,6 @@ class TestGenerateImageTool:
 
             server = create_mcp_server()
             with pytest.raises(ToolError, match="No model loaded"):
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     server.call_tool("generate_image", {"prompt": "test"})
                 )
