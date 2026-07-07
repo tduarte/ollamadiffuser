@@ -79,7 +79,6 @@ class TestMCPServerCreation:
                 "download_civitai_model",
                 "search_huggingface",
                 "install_hf_lora",
-                "install_hf_model",
                 "list_loras",
                 "find_loras",
                 "apply_lora",
@@ -87,7 +86,9 @@ class TestMCPServerCreation:
                 "attach_vae",
             ):
                 assert expected in tools
-            assert len(tools) == 15
+            # install_hf_model was removed: base-model checkpoints are CLI-only.
+            assert "install_hf_model" not in tools
+            assert len(tools) == 14
 
 
 @MCP_SKIP

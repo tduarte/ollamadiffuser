@@ -256,6 +256,35 @@ def test_pull_checkpoint_registers(tmp_path):
     assert res["content_category"] == "checkpoint"
 
 
+def test_pull_checkpoint_blocked_when_disallowed(tmp_path):
+    # allow_checkpoints=False (the MCP policy) must reject a checkpoint ref
+    # before anything downloads.
+    mgr = CivitaiManager()
+    with patch.object(cc, "requests") as req, \
+         patch.object(cc, "download_file") as dl:
+        req.get.return_value = FakeResponse(json_data=_version_json())
+        req.RequestException = Exception
+        with pytest.raises(CivitaiError, match="checkpoint"):
+            mgr.pull("999", allow_checkpoints=False)
+    assert not dl.called
+
+
+def test_pull_lora_allowed_when_checkpoints_disallowed(tmp_path):
+    # Disallowing checkpoints must NOT block LoRA downloads.
+    mgr = CivitaiManager()
+    lm = MagicMock()
+    lm.lora_dir_for.return_value = tmp_path / "loras" / "cool-model-v1-0"
+    lora_json = _version_json(model={"name": "Cool Model", "type": "LORA", "nsfw": False})
+    with patch.object(cc, "requests") as req, \
+         patch.object(cc, "download_file") as dl, \
+         patch("ollamadiffuser.core.utils.lora_manager.lora_manager", lm):
+        req.get.return_value = FakeResponse(json_data=lora_json)
+        req.RequestException = Exception
+        res = mgr.pull("999", allow_checkpoints=False)
+    assert dl.called
+    assert res["content_category"] == "lora"
+
+
 def test_pull_checkpoint_needs_model_type_when_unmapped(tmp_path):
     mgr = CivitaiManager()
     with patch.object(cc, "requests") as req, patch.object(cc, "download_file"):

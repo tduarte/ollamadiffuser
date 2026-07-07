@@ -88,10 +88,12 @@ def create_mcp_server():
             "trigger words, description.\n"
             "  - list_loras(base_model?) or find_loras(query): installed LoRAs with base model and "
             "trigger words.\n"
-            "  - search_civitai / download_civitai_model: fetch new models/LoRAs from CivitAI.\n"
-            "  - search_huggingface / install_hf_lora / install_hf_model: fetch new models/LoRAs "
-            "from Hugging Face (another source). HF LoRA repos can hold several .safetensors files "
-            "— search with show_files=True (or get the list from the result) and pass weight_name.\n"
+            "  - search_civitai / download_civitai_model: fetch new LoRAs (and embeddings/VAEs) "
+            "from CivitAI. Full base-model checkpoints CANNOT be downloaded via MCP — they must "
+            "be installed with the ollamadiffuser CLI.\n"
+            "  - search_huggingface / install_hf_lora: fetch new LoRAs from Hugging Face (another "
+            "source). HF LoRA repos can hold several .safetensors files — search with "
+            "show_files=True (or get the list from the result) and pass weight_name.\n"
             "Typical flow: load_model -> (optional) apply_lora / load_embedding / attach_vae -> "
             "generate_image. generate_image auto-injects the loaded model's and LoRA's trigger "
             "words. For Pony-based SDXL checkpoints, also prepend 'score_9, score_8_up, score_7_up' "
@@ -425,19 +427,19 @@ def create_mcp_server():
     @mcp_server.tool()
     async def download_civitai_model(
         url_or_id: str,
-        model_type: Optional[str] = None,
         alias: Optional[str] = None,
         red: bool = False,
-        experimental: bool = False,
     ) -> str:
-        """Download and install a model from CivitAI / CivitAI Red.
+        """Download and install a LoRA, embedding, or VAE from CivitAI / CivitAI Red.
+
+        Full base-model checkpoints cannot be downloaded here — the ref is
+        rejected before anything downloads. Install checkpoints with the
+        ollamadiffuser CLI instead.
 
         Args:
             url_or_id: A civitai.com/civitai.red URL or a numeric model-version id.
-            model_type: Override the inferred type for checkpoints (sd15, sdxl, sd3, flux).
-            alias: Local name to register the model under.
+            alias: Local name to register the LoRA/embedding/VAE under.
             red: Treat a bare id / host-less ref as civitai.red.
-            experimental: Attempt FLUX/SD3 single-file checkpoints (may be incomplete).
 
         The API key is read from CIVITAI_API_KEY / settings; it is never passed here.
         """
@@ -446,8 +448,7 @@ def create_mcp_server():
         try:
             result = await asyncio.to_thread(
                 lambda: civitai_manager.pull(
-                    url_or_id, model_type=model_type, alias=alias, red=red,
-                    allow_experimental=experimental)
+                    url_or_id, alias=alias, red=red, allow_checkpoints=False)
             )
         except CivitaiError as e:
             return f"Download failed: {e}"
@@ -457,10 +458,8 @@ def create_mcp_server():
         lines = [f"Installed '{name}' ({result.get('model_type') or category})."]
         if result.get("trained_words"):
             lines.append(f"Trigger words: {', '.join(result['trained_words'])}")
-        if category == "checkpoint":
-            lines.append(f"Load and use it with: load_model('{name}') then generate_image(...).")
-        elif category == "lora":
-            lines.append(f"Load it onto a running model with the lora CLI, then generate.")
+        if category == "lora":
+            lines.append(f"Apply it to the loaded model with apply_lora('{name}'), then generate.")
         elif category == "embedding":
             lines.append(f"Apply it with load_embedding('{name}'), then use its trigger word in prompts.")
         elif category == "vae":
@@ -485,8 +484,8 @@ def create_mcp_server():
             show_files: Also list each result's .safetensors weight file(s). Use this to find the
                 weight_name to pass to install_hf_lora when a LoRA repo has multiple files.
 
-        Returns rows with each repo id; install a LoRA with install_hf_lora(repo_id, weight_name?)
-        or a full model with install_hf_model(repo_id, model_type).
+        Returns rows with each repo id; install a LoRA with install_hf_lora(repo_id, weight_name?).
+        Full base models cannot be installed here — use the ollamadiffuser CLI for those.
         """
         from ..core.utils import hf_client
 
@@ -511,8 +510,8 @@ def create_mcp_server():
                 if weights:
                     line += f"\n      weights: {', '.join(weights)}"
             lines.append(line)
-        lines.append("\nInstall a LoRA with install_hf_lora(repo_id=..., weight_name=...); "
-                     "a full model with install_hf_model(repo_id=..., model_type=...).")
+        lines.append("\nInstall a LoRA with install_hf_lora(repo_id=..., weight_name=...). "
+                     "Full base models must be installed with the ollamadiffuser CLI.")
         return "\n".join(lines)
 
     @mcp_server.tool()
@@ -549,37 +548,6 @@ def create_mcp_server():
             lines.append(f"Base model: {result['base_model']}")
         lines.append(f"Apply it to the loaded model with apply_lora('{name}').")
         return "\n".join(lines)
-
-    @mcp_server.tool()
-    async def install_hf_model(
-        repo_id: str,
-        model_type: str,
-        alias: Optional[str] = None,
-        variant: Optional[str] = None,
-    ) -> str:
-        """Download and install a full diffusers model from Hugging Face.
-
-        Args:
-            repo_id: Hugging Face repo, e.g. 'black-forest-labs/FLUX.1-schnell'.
-            model_type: One of sd15, sdxl, sd3, flux, mlx — how to load the model.
-            alias: Local name to register the model under (defaults to the repo id slug).
-            variant: Optional variant hint, e.g. 'fp16'.
-
-        After installing, load it with load_model('<name>') then generate_image(...).
-        """
-        from ..core.utils.hf_client import hf_manager, HuggingFaceError
-
-        try:
-            result = await asyncio.to_thread(
-                lambda: hf_manager.pull_model(
-                    repo_id, model_type=model_type, alias=alias, variant=variant)
-            )
-        except HuggingFaceError as e:
-            return f"Install failed: {e}"
-
-        name = result["name"]
-        return (f"Installed model '{name}' ({result['model_type']}) from {repo_id}.\n"
-                f"Load and use it with: load_model('{name}') then generate_image(...).")
 
     @mcp_server.tool()
     async def list_loras(base_model: Optional[str] = None) -> str:

@@ -578,11 +578,15 @@ class CivitaiManager:
 
     def pull(self, ref_str: str, *, model_type: Optional[str] = None,
              alias: Optional[str] = None, force: bool = False, red: bool = False,
-             allow_experimental: bool = False,
+             allow_experimental: bool = False, allow_checkpoints: bool = True,
              progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """Resolve a CivitAI ref, download it, and register it.
 
         Returns a small result dict: ``{name, content_category, model_type, path}``.
+
+        ``allow_checkpoints`` gates full base-model (checkpoint) downloads. It
+        defaults to True for the CLI; callers that only permit add-ons (e.g. the
+        MCP server) pass False to reject checkpoints before anything downloads.
         """
         ref = parse_civitai_ref(ref_str, red=red)
         version = resolve(ref)
@@ -590,6 +594,12 @@ class CivitaiManager:
         if category is None:
             raise CivitaiError(
                 f"Unsupported CivitAI type: {version.civitai_type!r}"
+            )
+        if category == "checkpoint" and not allow_checkpoints:
+            raise CivitaiError(
+                "Downloading full base-model checkpoints is not permitted here; "
+                "only LoRAs, embeddings, and VAEs can be downloaded. "
+                "Use the ollamadiffuser CLI to install checkpoints."
             )
         if category == "checkpoint":
             return self._pull_checkpoint(version, model_type=model_type, alias=alias,
