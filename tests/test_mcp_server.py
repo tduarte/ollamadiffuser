@@ -62,12 +62,13 @@ class TestMCPServerCreation:
                 "search_civitai",
                 "download_civitai_model",
                 "list_loras",
+                "find_loras",
                 "apply_lora",
                 "load_embedding",
                 "attach_vae",
             ):
                 assert expected in tools
-            assert len(tools) == 11
+            assert len(tools) == 12
 
 
 @MCP_SKIP

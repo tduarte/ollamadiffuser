@@ -55,7 +55,19 @@ def create_mcp_server():
     mcp_server = FastMCP(
         "OllamaDiffuser",
         instructions=(
-            "Local AI image generation via Stable Diffusion, FLUX, and 30+ models"
+            "Local AI image generation via Stable Diffusion, SDXL/Pony, FLUX, and MLX models.\n"
+            "IMPORTANT: discover models and LoRAs through THESE TOOLS — do not search the "
+            "filesystem. Models and LoRAs are registered with ollamadiffuser (in "
+            "~/.ollamadiffuser), not just files on disk, and each carries metadata you need:\n"
+            "  - list_models / get_model_details(name): installed models, their type, base model, "
+            "trigger words, description.\n"
+            "  - list_loras(base_model?) or find_loras(query): installed LoRAs with base model and "
+            "trigger words.\n"
+            "  - search_civitai / download_civitai_model: fetch new models/LoRAs from CivitAI.\n"
+            "Typical flow: load_model -> (optional) apply_lora / load_embedding / attach_vae -> "
+            "generate_image. generate_image auto-injects the loaded model's and LoRA's trigger "
+            "words. For Pony-based SDXL checkpoints, also prepend 'score_9, score_8_up, score_7_up' "
+            "to the prompt for good quality."
         ),
     )
 
@@ -368,6 +380,51 @@ def create_mcp_server():
             lines.append(f"  - {name}{tags} ({bm or 'unknown base'}){trig}")
         if shown == 0:
             return f"No LoRAs match base model '{base_model}'."
+        lines.append("\nApply one to the loaded model with apply_lora('<name>').")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def find_loras(query: str = "", base_model: Optional[str] = None,
+                         limit: int = 30) -> str:
+        """Search installed LoRAs by keyword — use this instead of browsing the filesystem.
+
+        Matches the query against each LoRA's name, trigger words, and base model.
+        LoRAs live in ollamadiffuser's registry (~/.ollamadiffuser/loras), so a
+        filesystem `find` will miss their metadata; this returns it.
+
+        Args:
+            query: Keyword(s) to match (name / trigger words / base model). Empty lists all.
+            base_model: Optional exact base-model filter (e.g. 'Pony', 'SDXL 1.0').
+            limit: Max results to return.
+        """
+        from ..core.utils.lora_manager import lora_manager
+
+        loras = lora_manager.list_installed_loras()
+        if not loras:
+            return "No LoRAs installed. Download some with download_civitai_model(...)."
+        q = query.lower().strip()
+        current = lora_manager.get_current_lora()
+        rows = []
+        for name, info in loras.items():
+            bm = info.get("base_model") or ""
+            if base_model and bm.lower() != base_model.lower():
+                continue
+            tw = info.get("trained_words") or []
+            haystack = " ".join([name, bm, " ".join(tw)]).lower()
+            if q and q not in haystack and not any(tok in haystack for tok in q.split()):
+                continue
+            rows.append((name, bm, tw, name == current))
+        if not rows:
+            suffix = f" for base model '{base_model}'" if base_model else ""
+            return f"No LoRAs match '{query}'{suffix}."
+        rows.sort(key=lambda r: r[0])
+        lines = [f"{len(rows)} matching LoRA(s):"]
+        for name, bm, tw, loaded in rows[:limit]:
+            tag = " [loaded]" if loaded else ""
+            trig = f" — triggers: {', '.join(tw)}" if tw else ""
+            lines.append(f"  - {name}{tag} ({bm or 'unknown base'}){trig}")
+        if len(rows) > limit:
+            lines.append(f"  ... and {len(rows) - limit} more (narrow with query or base_model).")
         lines.append("\nApply one to the loaded model with apply_lora('<name>').")
         return "\n".join(lines)
 
