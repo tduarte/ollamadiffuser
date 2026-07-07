@@ -98,9 +98,14 @@ class MLXStrategy(InferenceStrategy):
 
     Note: mflux uses MLX arrays under the hood, not PyTorch tensors.
     The base class's ``unload()`` calls ``pipeline.to("cpu")`` which
-    doesn't apply here, so we override it. ``load_lora_runtime`` from
-    the base also assumes diffusers — mflux LoRAs are passed at
-    construction time, so we override that too with a clear error.
+    doesn't apply here, so we override it.
+
+    LoRAs: mflux takes ``lora_paths`` / ``lora_scales`` at **construction
+    time**, not at runtime — there is no hot-swap. So ``load_lora_runtime``
+    transparently **reloads** the mflux model with the LoRA applied (and
+    ``unload_lora`` reloads it without). This works for FLUX.1, FLUX.2/Klein
+    and Z-Image LoRAs. The reload is fast relative to generation because the
+    weights are already cached locally.
     """
 
     def __init__(self) -> None:
@@ -169,7 +174,8 @@ class MLXStrategy(InferenceStrategy):
             f"(quantize={quantize})..."
         )
         try:
-            self._mlx_model = model_cls(quantize=quantize, model_config=mflux_config)
+            self._mlx_model = self._construct_mlx_model(
+                model_cls, mflux_config, quantize)
         except Exception as e:
             logger.error(f"Failed to load MLX model: {e}", exc_info=True)
             return False
@@ -323,6 +329,25 @@ class MLXStrategy(InferenceStrategy):
             return QwenImage, factories[mlx_model_name]()
 
         raise ValueError(f"Unhandled mlx_variant: {variant}")
+
+    @staticmethod
+    def _construct_mlx_model(model_cls, mflux_config, quantize,
+                             lora_paths=None, lora_scales=None):
+        """Instantiate an mflux model, optionally with construction-time LoRAs.
+
+        mflux's model constructors all accept ``lora_paths`` / ``lora_scales``
+        (see ``Flux1``, ``Flux2Klein``, ``ZImage``). We only pass them when a
+        LoRA is requested so the no-LoRA path stays byte-for-byte identical to
+        the original ``model_cls(quantize=..., model_config=...)`` call.
+        """
+        kwargs = {"quantize": quantize, "model_config": mflux_config}
+        if lora_paths:
+            kwargs["lora_paths"] = list(lora_paths)
+            kwargs["lora_scales"] = (
+                list(lora_scales) if lora_scales is not None
+                else [1.0] * len(lora_paths)
+            )
+        return model_cls(**kwargs)
 
     # ----- Generation ---------------------------------------------------
 
@@ -484,24 +509,110 @@ class MLXStrategy(InferenceStrategy):
         self._variant = None
         logger.info("MLX model unloaded")
 
-    # ----- Unsupported on this backend ----------------------------------
+    # ----- LoRA (construction-time, via transparent reload) -------------
 
     def load_lora_runtime(self, repo_id, weight_name=None, scale=1.0) -> bool:
-        """LoRA at runtime is not yet wired for the MLX backend.
+        """Apply a LoRA by reloading the mflux model with it.
 
-        mflux expects ``lora_paths`` and ``lora_scales`` at construction
-        time, not at runtime. Supporting hot-swap would require
-        reconstructing the Flux1 instance — deferred until users ask.
+        mflux takes ``lora_paths`` / ``lora_scales`` at construction time, so we
+        rebuild the model with the LoRA rather than hot-swapping. ``repo_id`` +
+        ``weight_name`` are resolved to a local ``.safetensors`` file (mflux
+        cannot load from a bare HF repo id). On any failure the existing
+        (base or previously-LoRA'd) model is left untouched.
         """
-        logger.error(
-            "Runtime LoRA loading is not supported on the MLX backend yet. "
-            "mflux takes lora_paths/lora_scales at construction time. "
-            "Track via https://github.com/LocalKinAI/ollamadiffuser/issues/7"
-        )
-        return False
+        if self._mlx_model is None:
+            logger.error("MLX model not loaded — call load() before applying a LoRA.")
+            return False
+
+        lora_file = self._resolve_lora_file(repo_id, weight_name)
+        if lora_file is None:
+            logger.error(
+                "Could not resolve a local LoRA weight file (repo_id=%r, "
+                "weight_name=%r). mflux applies LoRAs from local .safetensors "
+                "files — install it first, e.g. "
+                "`ollamadiffuser hf pull <repo> --weight-name <file>`.",
+                repo_id, weight_name,
+            )
+            return False
+
+        try:
+            new_model = self._rebuild_current_model(
+                lora_paths=[str(lora_file)], lora_scales=[float(scale)])
+        except Exception as e:
+            logger.error(f"Failed to reload MLX model with LoRA: {e}", exc_info=True)
+            return False
+
+        # Swap in only after a successful build so a failure is non-destructive.
+        self._mlx_model = new_model
+        self.pipeline = new_model
+        self.current_lora = {
+            "repo_id": repo_id,
+            "weight_name": weight_name,
+            "scale": scale,
+            "path": str(lora_file),
+            "loaded": True,
+        }
+        logger.info(f"MLX LoRA applied from {lora_file} (scale={scale})")
+        return True
 
     def unload_lora(self) -> bool:
-        return False
+        """Remove the LoRA by reloading the mflux model without any adapters."""
+        if self._mlx_model is None:
+            return False
+        if not self.current_lora:
+            return True  # nothing to do
+        try:
+            self._mlx_model = self._rebuild_current_model()
+        except Exception as e:
+            logger.error(f"Failed to reload MLX model without LoRA: {e}", exc_info=True)
+            return False
+        self.pipeline = self._mlx_model
+        self.current_lora = None
+        logger.info("MLX LoRA unloaded (model reloaded without adapters)")
+        return True
+
+    def _rebuild_current_model(self, lora_paths=None, lora_scales=None):
+        """Re-instantiate the current mflux model, optionally with LoRAs.
+
+        Resolves the class/config from the loaded model's registry parameters,
+        so it produces the same model as :meth:`load` did (plus any LoRAs).
+        """
+        params = (self.model_config.parameters if self.model_config else {}) or {}
+        variant = params.get("mlx_variant", "flux1")
+        mlx_model_name = params.get("mlx_model_name")
+        quantize = params.get("quantize")
+        model_cls, mflux_config = self._resolve_model_and_config(variant, mlx_model_name)
+        return self._construct_mlx_model(
+            model_cls, mflux_config, quantize,
+            lora_paths=lora_paths, lora_scales=lora_scales)
+
+    @staticmethod
+    def _resolve_lora_file(repo_id, weight_name=None):
+        """Resolve (repo_id, weight_name) to a local ``.safetensors`` file.
+
+        Handles the shapes lora_manager passes: a directory + filename (the
+        common case, since the weight is already downloaded locally), a bare
+        file path, or a directory containing a single weight file. Returns a
+        ``Path`` or None if nothing local can be found.
+        """
+        from pathlib import Path
+
+        base = Path(repo_id)
+        if weight_name:
+            cand = base / weight_name
+            if cand.is_file():
+                return cand
+        if base.is_file():
+            return base
+        if base.is_dir():
+            weights = sorted(base.glob("*.safetensors"))
+            if weight_name:
+                exact = [p for p in weights if p.name == weight_name]
+                if exact:
+                    return exact[0]
+            elif len(weights) == 1:
+                return weights[0]
+        return None
 
     def get_info(self):
         info = super().get_info()

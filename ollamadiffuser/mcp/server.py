@@ -88,6 +88,9 @@ def create_mcp_server():
             "  - list_loras(base_model?) or find_loras(query): installed LoRAs with base model and "
             "trigger words.\n"
             "  - search_civitai / download_civitai_model: fetch new models/LoRAs from CivitAI.\n"
+            "  - search_huggingface / install_hf_lora / install_hf_model: fetch new models/LoRAs "
+            "from Hugging Face (another source). HF LoRA repos can hold several .safetensors files "
+            "— search with show_files=True (or get the list from the result) and pass weight_name.\n"
             "Typical flow: load_model -> (optional) apply_lora / load_embedding / attach_vae -> "
             "generate_image. generate_image auto-injects the loaded model's and LoRA's trigger "
             "words. For Pony-based SDXL checkpoints, also prepend 'score_9, score_8_up, score_7_up' "
@@ -394,6 +397,120 @@ def create_mcp_server():
         elif category == "vae":
             lines.append(f"Apply it with attach_vae('{name}') while a model is loaded.")
         return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def search_huggingface(
+        query: str,
+        model_type: Optional[str] = None,
+        base_model: Optional[str] = None,
+        limit: int = 10,
+        show_files: bool = False,
+    ) -> str:
+        """Search Hugging Face Hub for downloadable models and LoRAs.
+
+        Args:
+            query: Keyword to search for.
+            model_type: Optional filter: 'lora' (adapters) or 'checkpoint' (full diffusers model).
+            base_model: Optional base-model tag filter, e.g. 'black-forest-labs/FLUX.2-klein-9B'.
+            limit: Maximum number of results.
+            show_files: Also list each result's .safetensors weight file(s). Use this to find the
+                weight_name to pass to install_hf_lora when a LoRA repo has multiple files.
+
+        Returns rows with each repo id; install a LoRA with install_hf_lora(repo_id, weight_name?)
+        or a full model with install_hf_model(repo_id, model_type).
+        """
+        from ..core.utils import hf_client
+
+        try:
+            rows = await asyncio.to_thread(
+                hf_client.search, query, model_type, base_model, limit, show_files
+            )
+        except hf_client.HuggingFaceError as e:
+            return f"Search failed: {e}"
+
+        if not rows:
+            return f"No Hugging Face results for '{query}'."
+        lines = [f"Hugging Face results for '{query}':"]
+        for r in rows:
+            kind = "LoRA" if r.get("is_lora") else (r.get("pipeline_tag") or "model")
+            line = (
+                f"  - {r.get('repo_id')} ({kind}, base: {r.get('base_model') or '?'}, "
+                f"{r.get('downloads', 0)} downloads, {r.get('likes', 0)} likes)"
+            )
+            if show_files:
+                weights = r.get("lora_weights") or []
+                if weights:
+                    line += f"\n      weights: {', '.join(weights)}"
+            lines.append(line)
+        lines.append("\nInstall a LoRA with install_hf_lora(repo_id=..., weight_name=...); "
+                     "a full model with install_hf_model(repo_id=..., model_type=...).")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def install_hf_lora(
+        repo_id: str,
+        weight_name: Optional[str] = None,
+        alias: Optional[str] = None,
+    ) -> str:
+        """Download and install a LoRA from Hugging Face.
+
+        Args:
+            repo_id: Hugging Face repo, e.g. 'diroverflo/FLux_Klein_9B_NSFW'.
+            weight_name: The .safetensors weight file to install. Optional if the repo has exactly
+                one; required (with an error listing options) if it has several. Use
+                search_huggingface(show_files=True) to discover the file names.
+            alias: Local name to register the LoRA under (defaults to the repo id slug).
+
+        After installing, apply it to the loaded model with apply_lora('<name>').
+        """
+        from ..core.utils.hf_client import hf_manager, HuggingFaceError
+
+        try:
+            result = await asyncio.to_thread(
+                lambda: hf_manager.pull_lora(repo_id, weight_name=weight_name, alias=alias)
+            )
+        except HuggingFaceError as e:
+            return f"Install failed: {e}"
+
+        name = result["name"]
+        lines = [f"Installed LoRA '{name}' from {repo_id}."]
+        if result.get("weight_name"):
+            lines.append(f"Weight file: {result['weight_name']}")
+        if result.get("base_model"):
+            lines.append(f"Base model: {result['base_model']}")
+        lines.append(f"Apply it to the loaded model with apply_lora('{name}').")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def install_hf_model(
+        repo_id: str,
+        model_type: str,
+        alias: Optional[str] = None,
+        variant: Optional[str] = None,
+    ) -> str:
+        """Download and install a full diffusers model from Hugging Face.
+
+        Args:
+            repo_id: Hugging Face repo, e.g. 'black-forest-labs/FLUX.1-schnell'.
+            model_type: One of sd15, sdxl, sd3, flux, mlx — how to load the model.
+            alias: Local name to register the model under (defaults to the repo id slug).
+            variant: Optional variant hint, e.g. 'fp16'.
+
+        After installing, load it with load_model('<name>') then generate_image(...).
+        """
+        from ..core.utils.hf_client import hf_manager, HuggingFaceError
+
+        try:
+            result = await asyncio.to_thread(
+                lambda: hf_manager.pull_model(
+                    repo_id, model_type=model_type, alias=alias, variant=variant)
+            )
+        except HuggingFaceError as e:
+            return f"Install failed: {e}"
+
+        name = result["name"]
+        return (f"Installed model '{name}' ({result['model_type']}) from {repo_id}.\n"
+                f"Load and use it with: load_model('{name}') then generate_image(...).")
 
     @mcp_server.tool()
     async def list_loras(base_model: Optional[str] = None) -> str:

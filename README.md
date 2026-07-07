@@ -273,6 +273,53 @@ ollamadiffuser vae load <name>                # attached until the model reloads
 
 ---
 
+## 🤗 Hugging Face
+
+Search and install **models and LoRAs** directly from the [Hugging Face Hub](https://huggingface.co) — the complement to the CivitAI path above. HF hosts both full diffusers pipelines (multi-folder repos) and LoRA adapter repos (one or more `.safetensors` weight files).
+
+```bash
+# Search, sorted by downloads (--type lora | checkpoint, --base-model to narrow)
+ollamadiffuser hf search "flux lora" --type lora
+ollamadiffuser hf search "klein" --type lora --base-model black-forest-labs/FLUX.2-klein-9B --files
+
+# Inspect a repo before installing (shows base model + the .safetensors weight files)
+ollamadiffuser hf info diroverflo/FLux_Klein_9B_NSFW
+
+# Install a LoRA. A repo with one weight file auto-selects it; if it has several,
+# pass --weight-name (search --files / hf info list the options).
+ollamadiffuser hf pull diroverflo/FLux_Klein_9B_NSFW
+ollamadiffuser hf pull dx8152/Flux2-Klein-9B-Consistency --weight-name "Klein-consistency.safetensors" --alias klein-consistency
+
+# Install a full model into the registry (then run it like any other)
+ollamadiffuser hf pull black-forest-labs/FLUX.1-schnell --as-model --type flux --alias flux-schnell
+ollamadiffuser run flux-schnell
+```
+
+`hf` is an alias for `huggingface`. LoRA downloads reuse the same robust downloader as `lora pull`; full-model installs register the repo and download it through the normal pipeline (identical to `registry add` + `pull`). Set `HF_TOKEN` for gated repos.
+
+### MLX LoRAs (Apple Silicon / FLUX.2 Klein, Z-Image)
+
+LoRAs now work on the **MLX** backend too. mflux applies LoRAs at model-construction time, so `lora load` / the MCP `apply_lora` transparently **reload** the MLX model with the adapter applied (and unload reloads it without) — no error, no manual steps:
+
+```bash
+# Motivating example: a FLUX.2 Klein 9B LoRA on the MLX Klein model
+ollamadiffuser hf pull diroverflo/FLux_Klein_9B_NSFW
+ollamadiffuser run flux.2-klein-9b-mlx          # in one shell (serves the model)
+ollamadiffuser lora load diroverflo_FLux_Klein_9B_NSFW   # applied via a fast reload
+```
+
+The reload is cheap relative to generation because the weights are already cached locally.
+
+### MCP tools
+
+Exposed to AI assistants alongside the CivitAI tools:
+
+- `search_huggingface(query, model_type?, base_model?, limit?, show_files?)` — `show_files=True` surfaces each LoRA repo's `.safetensors` file names so the agent can pick a `weight_name`.
+- `install_hf_lora(repo_id, weight_name?, alias?)` — install a LoRA (then `apply_lora`).
+- `install_hf_model(repo_id, model_type, alias?, variant?)` — install a full model (then `load_model`).
+
+---
+
 ## 🎯 Supported Models
 
 Choose from 40+ models spanning every major architecture:

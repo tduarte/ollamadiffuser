@@ -333,10 +333,17 @@ class LoRAManager:
             
             # Load LoRA weights
             if "weight_name" in lora_info:
-                # Load specific weight file
+                weight_name = lora_info["weight_name"]
+                # Prefer the already-downloaded local file: MLX (mflux) needs a
+                # real filesystem path, and diffusers avoids a re-download. Fall
+                # back to the stored repo_id (e.g. a bare HF repo id) only when
+                # the local file is missing.
+                load_source = lora_info.get("repo_id")
+                if weight_name and (lora_path / weight_name).is_file():
+                    load_source = str(lora_path)
                 success = engine.load_lora_runtime(
-                    repo_id=lora_info["repo_id"],
-                    weight_name=lora_info["weight_name"],
+                    repo_id=load_source,
+                    weight_name=weight_name,
                     scale=scale
                 )
             else:
