@@ -97,15 +97,18 @@ class LoRAManager:
             
             import requests
             
-            # Prepare API request
+            # Prepare API request. Send the resolved local weight path (not the
+            # bare repo_id) so the server-side load_lora_runtime can resolve a
+            # real file — required for MLX (mflux), harmless for diffusers.
+            load_source, weight_name = self._resolve_load_source(lora_info)
             api_data = {
                 "lora_name": lora_name,
-                "repo_id": lora_info["repo_id"],
+                "repo_id": load_source,
                 "scale": scale
             }
-            
-            if "weight_name" in lora_info:
-                api_data["weight_name"] = lora_info["weight_name"]
+
+            if weight_name:
+                api_data["weight_name"] = weight_name
             
             # Make API request to load LoRA
             response = requests.post(
@@ -152,7 +155,23 @@ class LoRAManager:
             logger.error(f"Failed to unload LoRA via API: {e}")
             return False
     
-    def pull_lora(self, repo_id: str, weight_name: Optional[str] = None, 
+    def _resolve_load_source(self, lora_info: Dict) -> tuple:
+        """Return ``(load_source, weight_name)`` to pass to ``load_lora_runtime``.
+
+        Prefer the already-downloaded local weight file: MLX (mflux) needs a real
+        filesystem path, and diffusers avoids a re-download. Fall back to the
+        stored ``repo_id`` (e.g. a bare Hugging Face repo id) only when the local
+        file is missing. Shared by the in-process path (:meth:`load_lora`) and the
+        API path (:meth:`_try_load_lora_via_api`) so both resolve identically.
+        """
+        weight_name = lora_info.get("weight_name")
+        load_source = lora_info.get("repo_id")
+        path = lora_info.get("path")
+        if weight_name and path and (Path(path) / weight_name).is_file():
+            load_source = str(path)
+        return load_source, weight_name
+
+    def pull_lora(self, repo_id: str, weight_name: Optional[str] = None,
                   alias: Optional[str] = None, progress_callback: Optional[Callable] = None) -> bool:
         """Download LoRA weights from Hugging Face Hub"""
         try:
@@ -333,10 +352,12 @@ class LoRAManager:
             
             # Load LoRA weights
             if "weight_name" in lora_info:
-                # Load specific weight file
+                # Prefer the already-downloaded local file (MLX needs a real path;
+                # diffusers avoids a re-download). Same resolution as the API path.
+                load_source, weight_name = self._resolve_load_source(lora_info)
                 success = engine.load_lora_runtime(
-                    repo_id=lora_info["repo_id"],
-                    weight_name=lora_info["weight_name"],
+                    repo_id=load_source,
+                    weight_name=weight_name,
                     scale=scale
                 )
             else:

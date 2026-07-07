@@ -471,12 +471,75 @@ class TestLoadAndGenerate:
 
 
 # --------------------------------------------------------------------------
-# Unsupported features (clear-error contract)
+# LoRA (construction-time, via transparent reload)
 # --------------------------------------------------------------------------
 
+class TestResolveLoRAFile:
+    """_resolve_lora_file is pure/path-based — runs on any platform."""
+
+    def test_dir_plus_weight_name(self, tmp_path):
+        f = tmp_path / "adapter.safetensors"
+        f.write_bytes(b"x")
+        assert MLXStrategy._resolve_lora_file(str(tmp_path), "adapter.safetensors") == f
+
+    def test_bare_file_path(self, tmp_path):
+        f = tmp_path / "adapter.safetensors"
+        f.write_bytes(b"x")
+        assert MLXStrategy._resolve_lora_file(str(f)) == f
+
+    def test_dir_single_weight_autopicks(self, tmp_path):
+        f = tmp_path / "only.safetensors"
+        f.write_bytes(b"x")
+        assert MLXStrategy._resolve_lora_file(str(tmp_path)) == f
+
+    def test_unresolvable_returns_none(self, tmp_path):
+        # HF repo id (not local) with a filename that isn't present
+        assert MLXStrategy._resolve_lora_file("org/repo", "missing.safetensors") is None
+        # dir with multiple weights and no weight_name → ambiguous → None
+        (tmp_path / "a.safetensors").write_bytes(b"x")
+        (tmp_path / "b.safetensors").write_bytes(b"x")
+        assert MLXStrategy._resolve_lora_file(str(tmp_path)) is None
+
+
+class TestThreadPinning:
+    """All mflux/MLX work must run on ONE dedicated thread (Metal streams are
+    thread-affine), even when callers invoke from different pool threads — as
+    the API server / MCP do via asyncio.to_thread."""
+
+    def test_run_uses_single_named_worker_thread(self):
+        import threading
+
+        s = MLXStrategy()
+        names = []
+        s._run(lambda: names.append(threading.current_thread().name))
+        s._run(lambda: names.append(threading.current_thread().name))
+        # Invoke from a *different* caller thread — must still pin to one worker.
+        t = threading.Thread(
+            target=lambda: s._run(lambda: names.append(threading.current_thread().name)))
+        t.start()
+        t.join()
+        assert all(n.startswith("mlx") for n in names)  # the dedicated pool
+        assert len(set(names)) == 1                       # always the same thread
+        assert names[0] != threading.current_thread().name  # not the caller's
+        s.unload()
+
+    def test_run_propagates_exceptions_to_caller(self):
+        s = MLXStrategy()
+        with pytest.raises(ValueError, match="boom"):
+            s._run(lambda: (_ for _ in ()).throw(ValueError("boom")))
+        s.unload()
+
+    def test_unload_shuts_down_executor(self):
+        s = MLXStrategy()
+        s._run(lambda: None)
+        assert s._executor is not None
+        s.unload()
+        assert s._executor is None
+
+
 @pytest.mark.skipif(not is_apple_silicon(), reason="MLX only runs on Apple Silicon")
-class TestUnsupported:
-    def test_runtime_lora_returns_false_with_log(self, caplog):
+class TestLoRA:
+    def test_load_lora_reloads_model_with_lora_paths(self, tmp_path):
         cls_mock, _, mflux_config_mock = _stub_resolution()
         s = MLXStrategy()
         with patch.object(
@@ -485,10 +548,58 @@ class TestUnsupported:
             return_value=(cls_mock, mflux_config_mock),
         ):
             s.load(_make_config(), device="mps")
-        with caplog.at_level("ERROR"):
-            assert s.load_lora_runtime("some/repo") is False
-        assert any("not supported" in r.message.lower() for r in caplog.records)
+            lora = tmp_path / "adapter.safetensors"
+            lora.write_bytes(b"x")
+            ok = s.load_lora_runtime(str(tmp_path), "adapter.safetensors", scale=0.8)
+        assert ok is True
+        # The model was rebuilt with construction-time LoRA args.
+        last = cls_mock.call_args
+        assert last.kwargs["lora_paths"] == [str(lora)]
+        assert last.kwargs["lora_scales"] == [0.8]
+        assert s.current_lora["scale"] == 0.8
+        assert s.current_lora["path"] == str(lora)
+        assert s.is_loaded
 
+    def test_load_lora_unresolvable_returns_false_nondestructive(self):
+        cls_mock, inst_mock, mflux_config_mock = _stub_resolution()
+        s = MLXStrategy()
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
+            s.load(_make_config(), device="mps")
+            base_model = s._mlx_model
+            ok = s.load_lora_runtime("org/repo-not-local", "missing.safetensors")
+        assert ok is False
+        assert s.current_lora is None
+        assert s._mlx_model is base_model  # untouched
+
+    def test_unload_lora_reloads_without_adapters(self, tmp_path):
+        cls_mock, _, mflux_config_mock = _stub_resolution()
+        s = MLXStrategy()
+        with patch.object(
+            MLXStrategy,
+            "_resolve_model_and_config",
+            return_value=(cls_mock, mflux_config_mock),
+        ):
+            s.load(_make_config(), device="mps")
+            lora = tmp_path / "a.safetensors"
+            lora.write_bytes(b"x")
+            assert s.load_lora_runtime(str(tmp_path), "a.safetensors") is True
+            assert s.current_lora is not None
+            assert s.unload_lora() is True
+        assert s.current_lora is None
+        # Final construction carried no LoRA kwargs.
+        assert "lora_paths" not in cls_mock.call_args.kwargs
+
+    def test_load_lora_before_load_returns_false(self):
+        s = MLXStrategy()
+        assert s.load_lora_runtime("some/dir", "x.safetensors") is False
+
+
+@pytest.mark.skipif(not is_apple_silicon(), reason="MLX only runs on Apple Silicon")
+class TestBackendInfo:
     def test_get_info_reports_backend_mlx(self):
         cls_mock, _, mflux_config_mock = _stub_resolution()
         s = MLXStrategy()

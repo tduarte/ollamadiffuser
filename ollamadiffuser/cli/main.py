@@ -91,6 +91,12 @@ from .civitai_commands import civitai
 
 cli.add_command(civitai)
 
+# --- Register Hugging Face commands (group + `hf` alias) ---
+from .huggingface_commands import huggingface, hf
+
+cli.add_command(huggingface)
+cli.add_command(hf)
+
 # --- Register embedding & VAE commands ---
 from .embedding_commands import embedding
 from .vae_commands import vae

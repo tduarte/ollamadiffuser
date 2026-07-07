@@ -88,10 +88,29 @@ def create_mcp_server():
             "  - list_loras(base_model?) or find_loras(query): installed LoRAs with base model and "
             "trigger words.\n"
             "  - search_civitai / download_civitai_model: fetch new models/LoRAs from CivitAI.\n"
+            "  - search_huggingface / install_hf_lora / install_hf_model: fetch new models/LoRAs "
+            "from Hugging Face (another source). HF LoRA repos can hold several .safetensors files "
+            "— search with show_files=True (or get the list from the result) and pass weight_name.\n"
             "Typical flow: load_model -> (optional) apply_lora / load_embedding / attach_vae -> "
             "generate_image. generate_image auto-injects the loaded model's and LoRA's trigger "
             "words. For Pony-based SDXL checkpoints, also prepend 'score_9, score_8_up, score_7_up' "
             "to the prompt for good quality.\n"
+            "PROMPT QUALITY: before generating, if the user's prompt is short or vague (e.g. "
+            "'a cat', 'a warrior'), first ENRICH it into a detailed prompt — a well-specified "
+            "prompt improves results more than any parameter. Preserve the user's intent and any "
+            "details they gave; never swap in a different subject. Work through this framework, "
+            "adding what fits (skip what the user clearly doesn't want): (1) subject + key "
+            "attributes (age, species/material, expression, clothing); (2) action/pose (dynamic vs "
+            "static); (3) environment/setting (location, background, time period); (4) composition "
+            "(shot type — close-up/wide/aerial, camera angle, framing, rule of thirds); (5) "
+            "lighting (direction, soft/hard, source e.g. golden hour/studio/neon, mood); (6) color "
+            "palette (dominant tones, contrast, saturation); (7) style/medium (photograph, oil "
+            "painting, 3D render, anime, or a specific artist/era); (8) for photoreal, camera/lens "
+            "(focal length, depth of field, film grain, aspect ratio); (9) mood/atmosphere; (10) "
+            "detail/quality tags ('highly detailed', 'sharp focus', '8k') — these help some models "
+            "more than others. Keep model/LoRA trigger words at the front. Briefly tell the user "
+            "the enhanced prompt you used. If the user gave an already-detailed prompt or asked for "
+            "exact wording, use it verbatim.\n"
             "ANATOMY REVIEW: after each generate_image, LOOK AT the returned image and check "
             "hands/fingers (count + shape), limbs, eyes and faces — these are where diffusion "
             "models fail most. If you see extra/fused fingers, malformed hands, extra limbs or "
@@ -117,6 +136,12 @@ def create_mcp_server():
         avoid_anatomy_errors: bool = True,
     ) -> Image:
         """Generate an image from a text prompt using a local diffusion model.
+
+        If `prompt` is short or vague, first expand it into a detailed prompt
+        (subject + attributes, action, setting, composition, lighting, color,
+        style/medium, mood, quality tags) while preserving the user's intent —
+        see the PROMPT QUALITY guidance in the server instructions. A
+        well-specified prompt improves results more than any parameter here.
 
         After generating, LOOK AT the returned image and check anatomy —
         hands/fingers (count and shape), limbs, eyes, faces. If something is
@@ -394,6 +419,120 @@ def create_mcp_server():
         elif category == "vae":
             lines.append(f"Apply it with attach_vae('{name}') while a model is loaded.")
         return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def search_huggingface(
+        query: str,
+        model_type: Optional[str] = None,
+        base_model: Optional[str] = None,
+        limit: int = 10,
+        show_files: bool = False,
+    ) -> str:
+        """Search Hugging Face Hub for downloadable models and LoRAs.
+
+        Args:
+            query: Keyword to search for.
+            model_type: Optional filter: 'lora' (adapters) or 'checkpoint' (full diffusers model).
+            base_model: Optional base-model tag filter, e.g. 'black-forest-labs/FLUX.2-klein-9B'.
+            limit: Maximum number of results.
+            show_files: Also list each result's .safetensors weight file(s). Use this to find the
+                weight_name to pass to install_hf_lora when a LoRA repo has multiple files.
+
+        Returns rows with each repo id; install a LoRA with install_hf_lora(repo_id, weight_name?)
+        or a full model with install_hf_model(repo_id, model_type).
+        """
+        from ..core.utils import hf_client
+
+        try:
+            rows = await asyncio.to_thread(
+                hf_client.search, query, model_type, base_model, limit, show_files
+            )
+        except hf_client.HuggingFaceError as e:
+            return f"Search failed: {e}"
+
+        if not rows:
+            return f"No Hugging Face results for '{query}'."
+        lines = [f"Hugging Face results for '{query}':"]
+        for r in rows:
+            kind = "LoRA" if r.get("is_lora") else (r.get("pipeline_tag") or "model")
+            line = (
+                f"  - {r.get('repo_id')} ({kind}, base: {r.get('base_model') or '?'}, "
+                f"{r.get('downloads', 0)} downloads, {r.get('likes', 0)} likes)"
+            )
+            if show_files:
+                weights = r.get("lora_weights") or []
+                if weights:
+                    line += f"\n      weights: {', '.join(weights)}"
+            lines.append(line)
+        lines.append("\nInstall a LoRA with install_hf_lora(repo_id=..., weight_name=...); "
+                     "a full model with install_hf_model(repo_id=..., model_type=...).")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def install_hf_lora(
+        repo_id: str,
+        weight_name: Optional[str] = None,
+        alias: Optional[str] = None,
+    ) -> str:
+        """Download and install a LoRA from Hugging Face.
+
+        Args:
+            repo_id: Hugging Face repo, e.g. 'diroverflo/FLux_Klein_9B_NSFW'.
+            weight_name: The .safetensors weight file to install. Optional if the repo has exactly
+                one; required (with an error listing options) if it has several. Use
+                search_huggingface(show_files=True) to discover the file names.
+            alias: Local name to register the LoRA under (defaults to the repo id slug).
+
+        After installing, apply it to the loaded model with apply_lora('<name>').
+        """
+        from ..core.utils.hf_client import hf_manager, HuggingFaceError
+
+        try:
+            result = await asyncio.to_thread(
+                lambda: hf_manager.pull_lora(repo_id, weight_name=weight_name, alias=alias)
+            )
+        except HuggingFaceError as e:
+            return f"Install failed: {e}"
+
+        name = result["name"]
+        lines = [f"Installed LoRA '{name}' from {repo_id}."]
+        if result.get("weight_name"):
+            lines.append(f"Weight file: {result['weight_name']}")
+        if result.get("base_model"):
+            lines.append(f"Base model: {result['base_model']}")
+        lines.append(f"Apply it to the loaded model with apply_lora('{name}').")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def install_hf_model(
+        repo_id: str,
+        model_type: str,
+        alias: Optional[str] = None,
+        variant: Optional[str] = None,
+    ) -> str:
+        """Download and install a full diffusers model from Hugging Face.
+
+        Args:
+            repo_id: Hugging Face repo, e.g. 'black-forest-labs/FLUX.1-schnell'.
+            model_type: One of sd15, sdxl, sd3, flux, mlx — how to load the model.
+            alias: Local name to register the model under (defaults to the repo id slug).
+            variant: Optional variant hint, e.g. 'fp16'.
+
+        After installing, load it with load_model('<name>') then generate_image(...).
+        """
+        from ..core.utils.hf_client import hf_manager, HuggingFaceError
+
+        try:
+            result = await asyncio.to_thread(
+                lambda: hf_manager.pull_model(
+                    repo_id, model_type=model_type, alias=alias, variant=variant)
+            )
+        except HuggingFaceError as e:
+            return f"Install failed: {e}"
+
+        name = result["name"]
+        return (f"Installed model '{name}' ({result['model_type']}) from {repo_id}.\n"
+                f"Load and use it with: load_model('{name}') then generate_image(...).")
 
     @mcp_server.tool()
     async def list_loras(base_model: Optional[str] = None) -> str:

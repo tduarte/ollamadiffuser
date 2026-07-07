@@ -77,6 +77,9 @@ class TestMCPServerCreation:
                 "get_model_details",
                 "search_civitai",
                 "download_civitai_model",
+                "search_huggingface",
+                "install_hf_lora",
+                "install_hf_model",
                 "list_loras",
                 "find_loras",
                 "apply_lora",
@@ -84,7 +87,7 @@ class TestMCPServerCreation:
                 "attach_vae",
             ):
                 assert expected in tools
-            assert len(tools) == 12
+            assert len(tools) == 15
 
 
 @MCP_SKIP
