@@ -125,6 +125,25 @@ class ModelManager:
                 info['local_path'] = config.path
                 info['size'] = self._get_model_size(config.path)
             return info
+        # Fall back to locally-registered models that aren't in the built-in
+        # registry (e.g. CivitAI / agentimg imports), so they show up fully in
+        # `list`, `show`, and the MCP tools instead of as "Unknown".
+        if self.is_model_installed(model_name):
+            config = settings.models[model_name]
+            params = config.parameters or {}
+            return {
+                'model_type': config.model_type,
+                'variant': config.variant,
+                'parameters': params,
+                'repo_id': params.get('source', 'local'),
+                'base_model': params.get('base_model'),
+                'trained_words': params.get('trained_words', []),
+                'installed': True,
+                'is_gguf': 'gguf' in (config.variant or '').lower(),
+                'gguf_supported': GGUF_AVAILABLE,
+                'local_path': config.path,
+                'size': self._get_model_size(config.path),
+            }
         return None
     
     def _get_model_size(self, model_path: str) -> str:

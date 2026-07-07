@@ -13,13 +13,26 @@ logger = logging.getLogger(__name__)
 
 
 def _model_trigger_words(model_name: Optional[str]):
-    """Trigger words stored on a model's config (CivitAI checkpoints), if any."""
-    if not model_name:
-        return []
-    cfg = settings.models.get(model_name)
-    if not cfg or not cfg.parameters:
-        return []
-    return cfg.parameters.get("trained_words") or []
+    """Trigger words to auto-inject: the loaded model's plus any loaded LoRA's."""
+    words = []
+    if model_name:
+        cfg = settings.models.get(model_name)
+        if cfg and cfg.parameters:
+            words += cfg.parameters.get("trained_words") or []
+    # Add the currently-loaded LoRA's trigger words (this is where they matter most).
+    try:
+        from ..core.utils.lora_manager import lora_manager
+        active = lora_manager.current_lora
+        if active and active in lora_manager.config:
+            words += lora_manager.config[active].get("trained_words") or []
+    except Exception:
+        pass
+    # De-dupe, preserve order.
+    seen, out = set(), []
+    for w in words:
+        if w and w.lower() not in seen:
+            seen.add(w.lower()); out.append(w)
+    return out
 
 
 def _ensure_mcp():
@@ -325,6 +338,60 @@ def create_mcp_server():
         elif category == "vae":
             lines.append(f"Apply it with attach_vae('{name}') while a model is loaded.")
         return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def list_loras(base_model: Optional[str] = None) -> str:
+        """List installed LoRAs the agent can apply to a model.
+
+        Shows each LoRA's base model and trigger words so you can pick one that
+        matches the loaded checkpoint and know what to put in the prompt.
+
+        Args:
+            base_model: Optional filter, e.g. 'SDXL 1.0', 'Pony', 'SD 1.5'.
+        """
+        from ..core.utils.lora_manager import lora_manager
+
+        loras = lora_manager.list_installed_loras()
+        if not loras:
+            return "No LoRAs installed. Download some with download_civitai_model(...)."
+        current = lora_manager.get_current_lora()
+        lines = ["Installed LoRAs:"]
+        shown = 0
+        for name, info in sorted(loras.items()):
+            bm = info.get("base_model")
+            if base_model and (bm or "").lower() != base_model.lower():
+                continue
+            shown += 1
+            tw = info.get("trained_words") or []
+            tags = " [loaded]" if name == current else ""
+            trig = f" — triggers: {', '.join(tw)}" if tw else ""
+            lines.append(f"  - {name}{tags} ({bm or 'unknown base'}){trig}")
+        if shown == 0:
+            return f"No LoRAs match base model '{base_model}'."
+        lines.append("\nApply one to the loaded model with apply_lora('<name>').")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def apply_lora(name: str, scale: float = 1.0) -> str:
+        """Apply an installed LoRA to the currently-loaded model.
+
+        Its trigger words are then auto-injected into generate_image prompts.
+
+        Args:
+            name: LoRA name (see list_loras).
+            scale: LoRA strength (default 1.0).
+        """
+        from ..core.utils.lora_manager import lora_manager
+
+        if not model_manager.is_model_loaded():
+            return "No model loaded. Load a model first with load_model(...)."
+        ok = await asyncio.to_thread(lora_manager.load_lora, name, scale)
+        if not ok:
+            return f"Failed to apply LoRA '{name}' (is it installed?)."
+        info = lora_manager.get_lora_info(name) or {}
+        tw = info.get("trained_words") or []
+        hint = f" Trigger words: {', '.join(tw)}." if tw else ""
+        return f"LoRA '{name}' applied at scale {scale}.{hint}"
 
     @mcp_server.tool()
     async def load_embedding(name: str) -> str:
