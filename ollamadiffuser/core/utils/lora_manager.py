@@ -4,6 +4,7 @@ LoRA (Low-Rank Adaptation) manager for downloading and managing LoRA weights
 """
 
 import os
+import re
 import json
 import shutil
 from pathlib import Path
@@ -85,11 +86,13 @@ class LoRAManager:
             if not self._is_server_running():
                 return False
             
-            # Check if LoRA exists
-            if lora_name not in self.config:
+            # Resolve tolerant of spaces/dashes/case, then check it exists
+            resolved = self.resolve_lora_name(lora_name)
+            if resolved is None:
                 logger.error(f"LoRA {lora_name} not found")
                 return False
-            
+            lora_name = resolved
+
             lora_info = self.config[lora_name]
             
             import requests
@@ -243,6 +246,31 @@ class LoRAManager:
         lora_path.mkdir(parents=True, exist_ok=True)
         return lora_path
 
+    @staticmethod
+    def _norm_name(s: str) -> str:
+        """Normalize a LoRA name for tolerant matching (drop spaces/dashes/case)."""
+        return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+    def resolve_lora_name(self, name: str) -> Optional[str]:
+        """Resolve a user/agent-supplied name to an actual registry key.
+
+        Registry keys are slugs (dashes), but callers often pass the human name
+        with spaces or the original filename. Match exactly first, then by a
+        normalized form of the key and the stored weight filename.
+        """
+        if name in self.config:
+            return name
+        target = self._norm_name(name)
+        if not target:
+            return None
+        for key, info in self.config.items():
+            if self._norm_name(key) == target:
+                return key
+            weight = info.get("weight_name", "")
+            if weight and self._norm_name(Path(weight).stem) == target:
+                return key
+        return None
+
     def register_downloaded_lora(self, lora_name: str, file_path, source: str,
                                  trained_words: Optional[List[str]] = None,
                                  base_model: Optional[str] = None,
@@ -283,11 +311,13 @@ class LoRAManager:
                 logger.error("No model is currently loaded")
                 return False
             
-            # Check if LoRA exists
-            if lora_name not in self.config:
+            # Resolve tolerant of spaces/dashes/case, then check it exists
+            resolved = self.resolve_lora_name(lora_name)
+            if resolved is None:
                 logger.error(f"LoRA {lora_name} not found")
                 return False
-            
+            lora_name = resolved
+
             lora_info = self.config[lora_name]
             lora_path = Path(lora_info["path"])
             
@@ -416,12 +446,13 @@ class LoRAManager:
         return self.current_lora
     
     def get_lora_info(self, lora_name: str) -> Optional[Dict]:
-        """Get information about a specific LoRA"""
-        return self.config.get(lora_name)
-    
+        """Get information about a specific LoRA (tolerant of spaces/dashes/case)."""
+        resolved = self.resolve_lora_name(lora_name)
+        return self.config.get(resolved) if resolved else None
+
     def is_lora_installed(self, lora_name: str) -> bool:
-        """Check if LoRA is installed"""
-        return lora_name in self.config
+        """Check if LoRA is installed (tolerant of spaces/dashes/case)."""
+        return self.resolve_lora_name(lora_name) is not None
 
 # Global LoRA manager instance
 lora_manager = LoRAManager() 

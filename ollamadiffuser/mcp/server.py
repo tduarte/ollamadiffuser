@@ -442,13 +442,19 @@ def create_mcp_server():
 
         if not model_manager.is_model_loaded():
             return "No model loaded. Load a model first with load_model(...)."
-        ok = await asyncio.to_thread(lora_manager.load_lora, name, scale)
+        # Resolve tolerant of spaces/dashes/case (agents often pass the display name).
+        resolved = lora_manager.resolve_lora_name(name)
+        if resolved is None:
+            return (f"No LoRA matches '{name}'. Use list_loras() or find_loras('{name}') "
+                    "to see the exact registered names.")
+        ok = await asyncio.to_thread(lora_manager.load_lora, resolved, scale)
         if not ok:
-            return f"Failed to apply LoRA '{name}' (is it installed?)."
-        info = lora_manager.get_lora_info(name) or {}
+            return (f"Found LoRA '{resolved}' but it failed to load onto the current model "
+                    "— it may be for a different base model (check its base with get_model_details / list_loras).")
+        info = lora_manager.get_lora_info(resolved) or {}
         tw = info.get("trained_words") or []
-        hint = f" Trigger words: {', '.join(tw)}." if tw else ""
-        return f"LoRA '{name}' applied at scale {scale}.{hint}"
+        hint = f" Trigger words to add to the prompt: {', '.join(tw)}." if tw else ""
+        return f"LoRA '{resolved}' applied at scale {scale}.{hint}"
 
     @mcp_server.tool()
     async def load_embedding(name: str) -> str:
