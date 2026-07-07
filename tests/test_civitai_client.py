@@ -308,6 +308,27 @@ def test_read_sidecar_civitai_info(tmp_path):
     assert meta["description"] == "hi"
 
 
+def test_read_sidecar_agentimg_metadata_json(tmp_path):
+    model = tmp_path / "ponyRealism_V23ULTRA.safetensors"
+    model.write_bytes(b"x")
+    # agentimg/Stability-Matrix shape: nested `civitai` block + top-level base_model.
+    (tmp_path / "ponyRealism_V23ULTRA.metadata.json").write_text(json.dumps({
+        "file_name": "ponyRealism_V23ULTRA",
+        "base_model": "Pony",
+        "from_civitai": True,
+        "civitai": {
+            "baseModel": "Pony",
+            "trainedWords": ["score_9", "score_8_up"],
+            "model": {"type": "Checkpoint", "description": "<p>pony</p>"},
+        },
+    }))
+    meta = cc.read_sidecar(model)
+    assert meta["content_category"] == "checkpoint"
+    assert meta["model_type"] == "sdxl"          # Pony -> sdxl
+    assert meta["trained_words"] == ["score_9", "score_8_up"]
+    assert meta["description"] == "pony"
+
+
 def test_import_local_checkpoint_in_place(tmp_path):
     f = tmp_path / "checkpoints" / "sdxl_cool.safetensors"
     f.parent.mkdir(parents=True)

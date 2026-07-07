@@ -508,7 +508,8 @@ def read_sidecar(model_file: Path) -> Optional[Dict[str, Any]]:
     """
     stem = model_file.parent / model_file.stem
     candidates = [
-        Path(f"{stem}.civitai.info"),
+        Path(f"{stem}.metadata.json"),   # Stability Matrix / agentimg
+        Path(f"{stem}.civitai.info"),    # Civitai Helper
         Path(f"{stem}.cm-info.json"),
         Path(f"{stem}.json"),
         model_file.with_name(model_file.name + ".json"),
@@ -527,18 +528,29 @@ def read_sidecar(model_file: Path) -> Optional[Dict[str, Any]]:
 
 
 def _normalize_sidecar(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize the varied sidecar schemas into our common shape."""
-    # Civitai Helper `.civitai.info` embeds the raw version JSON.
+    """Normalize the varied sidecar schemas into our common shape.
+
+    Handles Civitai Helper `.civitai.info` (raw version JSON), Stability Matrix
+    `.cm-info.json` (PascalCase), and agentimg `.metadata.json` (which nests the
+    CivitAI version JSON under a ``civitai`` key with top-level ``base_model``).
+    """
+    civ = data.get("civitai") if isinstance(data.get("civitai"), dict) else {}
     model = data.get("model") if isinstance(data.get("model"), dict) else {}
-    civitai_type = _first(data, "type") or model.get("type") or \
-        _first(data, "ModelType")  # Stability Matrix PascalCase
-    base_model = _first(data, "baseModel", "BaseModel", "sd version", "sd_version")
+    if not model and isinstance(civ.get("model"), dict):
+        model = civ["model"]
+    civitai_type = (_first(data, "type") or model.get("type") or civ.get("type")
+                    or _first(data, "ModelType"))
+    base_model = (_first(data, "baseModel", "BaseModel", "base_model",
+                         "sd version", "sd_version") or civ.get("baseModel"))
     trained = _first(data, "trainedWords", "TrainedWords", "activation text",
-                     "activation_text", default=[])
+                     "activation_text", default=None)
+    if not trained:
+        trained = civ.get("trainedWords") or []
     if isinstance(trained, str):
         trained = [w.strip() for w in trained.split(",") if w.strip()]
     description = _strip_html(
-        _first(data, "description", "Description", default="") or model.get("description", ""))
+        _first(data, "description", "Description", default="")
+        or model.get("description", "") or (civ.get("description") or ""))
     return {
         "civitai_type": civitai_type,
         "content_category": map_civitai_type(civitai_type),
