@@ -34,6 +34,22 @@ def mock_model_manager():
 
 
 @MCP_SKIP
+class TestAnatomyNegatives:
+    def test_merge_adds_and_dedupes(self):
+        from ollamadiffuser.mcp.server import _merge_negatives, _ANATOMY_NEGATIVE
+
+        # empty base -> anatomy terms added
+        assert "bad hands" in _merge_negatives("", True)
+        # opt-out -> unchanged
+        assert _merge_negatives("blurry", False) == "blurry"
+        # existing term not duplicated
+        merged = _merge_negatives("bad hands, blurry", True)
+        assert merged.lower().count("bad hands") == 1
+        # user terms preserved
+        assert merged.startswith("bad hands, blurry")
+
+
+@MCP_SKIP
 class TestMCPServerCreation:
     def test_create_server(self, mock_model_manager):
         with patch(

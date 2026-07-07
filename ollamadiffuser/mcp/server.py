@@ -12,6 +12,30 @@ from ..core.config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+# Curated negative-prompt terms that suppress the most common AI anatomy errors
+# (hands/fingers/limbs/eyes). Merged into the negative prompt when
+# avoid_anatomy_errors is on.
+_ANATOMY_NEGATIVE = (
+    "bad anatomy, bad hands, bad proportions, deformed, disfigured, mutation, mutated, "
+    "extra fingers, fewer fingers, missing fingers, fused fingers, extra digit, fewer digits, "
+    "malformed hands, poorly drawn hands, extra limbs, missing limbs, extra arms, extra legs, "
+    "deformed eyes, cross-eyed, long neck"
+)
+
+
+def _merge_negatives(negative_prompt: str, add_anatomy: bool) -> str:
+    """Append the anatomy negatives to the user's negative prompt, de-duped."""
+    if not add_anatomy:
+        return negative_prompt
+    have = {t.strip().lower() for t in (negative_prompt or "").split(",") if t.strip()}
+    extra = [t.strip() for t in _ANATOMY_NEGATIVE.split(",")
+             if t.strip() and t.strip().lower() not in have]
+    if not extra:
+        return negative_prompt
+    return (negative_prompt + ", " + ", ".join(extra)).strip(", ") if negative_prompt \
+        else ", ".join(extra)
+
+
 def _model_trigger_words(model_name: Optional[str]):
     """Trigger words to auto-inject: the loaded model's plus any loaded LoRA's."""
     words = []
@@ -67,7 +91,15 @@ def create_mcp_server():
             "Typical flow: load_model -> (optional) apply_lora / load_embedding / attach_vae -> "
             "generate_image. generate_image auto-injects the loaded model's and LoRA's trigger "
             "words. For Pony-based SDXL checkpoints, also prepend 'score_9, score_8_up, score_7_up' "
-            "to the prompt for good quality."
+            "to the prompt for good quality.\n"
+            "ANATOMY REVIEW: after each generate_image, LOOK AT the returned image and check "
+            "hands/fingers (count + shape), limbs, eyes and faces — these are where diffusion "
+            "models fail most. If you see extra/fused fingers, malformed hands, extra limbs or "
+            "warped faces, FIX IT and regenerate: (1) change the seed (cheapest fix — most anatomy "
+            "errors are seed-specific), (2) keep avoid_anatomy_errors=True, (3) if it's a "
+            "Pony/SDXL model, apply_lora() an installed hands/anatomy LoRA (find_loras('hand')), "
+            "(4) lower guidance_scale to ~5 and raise steps to ~30. Iterate up to a few times, "
+            "then return the best result and note any remaining issue."
         ),
     )
 
@@ -82,8 +114,16 @@ def create_mcp_server():
         guidance_scale: Optional[float] = None,
         seed: Optional[int] = None,
         use_trigger_words: bool = True,
+        avoid_anatomy_errors: bool = True,
     ) -> Image:
         """Generate an image from a text prompt using a local diffusion model.
+
+        After generating, LOOK AT the returned image and check anatomy —
+        hands/fingers (count and shape), limbs, eyes, faces. If something is
+        wrong, regenerate to fix it: try a different `seed` first (cheapest),
+        keep `avoid_anatomy_errors=True`, and if the model is Pony/SDXL consider
+        apply_lora() with an installed hands/anatomy LoRA (find_loras("hand")).
+        Lowering guidance_scale slightly (~5) and raising steps (~30) also helps.
 
         Args:
             prompt: Text description of the desired image
@@ -93,10 +133,14 @@ def create_mcp_server():
             height: Image height in pixels
             steps: Number of inference steps (model-specific default if omitted)
             guidance_scale: Guidance scale (model-specific default if omitted)
-            seed: Random seed for reproducibility
+            seed: Random seed for reproducibility. Change it to reroll an image
+                whose anatomy came out wrong.
             use_trigger_words: Auto-prepend the model's CivitAI trigger words if
                 they are not already present in the prompt (recommended).
+            avoid_anatomy_errors: Merge curated anatomy terms (bad hands, extra
+                fingers, deformed, ...) into the negative prompt (recommended).
         """
+        negative_prompt = _merge_negatives(negative_prompt, avoid_anatomy_errors)
         if model and model_manager.get_current_model() != model:
             if not model_manager.is_model_installed(model):
                 raise ValueError(
