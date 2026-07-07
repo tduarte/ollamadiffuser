@@ -45,7 +45,11 @@ class Settings:
         self.models: Dict[str, ModelConfig] = {}
         self.current_model: Optional[str] = None
         self.hf_token: Optional[str] = os.environ.get('HF_TOKEN')
-        
+        # CivitAI API key (for gated/early-access downloads and civitai.red).
+        # Env var takes precedence; a value in config.json is used as a fallback
+        # (see load_config). Never written to config.json unless already set.
+        self.civitai_api_key: Optional[str] = os.environ.get('CIVITAI_API_KEY')
+
         # Load configuration file
         self.load_config()
     
@@ -69,6 +73,11 @@ class Settings:
                     }
                 
                 self.current_model = config_data.get('current_model')
+
+                # CivitAI key fallback: only adopt the config value if the
+                # environment variable did not already provide one.
+                if not self.civitai_api_key and config_data.get('civitai_api_key'):
+                    self.civitai_api_key = config_data['civitai_api_key']
 
                 # Load custom path overrides
                 if 'paths' in config_data:
@@ -121,6 +130,11 @@ class Settings:
                 paths['cache_dir'] = str(self.cache_dir)
             if paths:
                 config_data['paths'] = paths
+
+            # Persist the CivitAI key only if one is set (avoid writing null).
+            civitai_api_key = getattr(self, 'civitai_api_key', None)
+            if civitai_api_key:
+                config_data['civitai_api_key'] = civitai_api_key
 
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config_data, f, indent=2, ensure_ascii=False)

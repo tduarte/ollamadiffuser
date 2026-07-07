@@ -45,7 +45,7 @@ class TestMCPServerCreation:
             assert server is not None
             assert server.name == "OllamaDiffuser"
 
-    def test_server_has_four_tools(self, mock_model_manager):
+    def test_server_registers_expected_tools(self, mock_model_manager):
         with patch(
             "ollamadiffuser.mcp.server.model_manager", mock_model_manager
         ):
@@ -53,11 +53,17 @@ class TestMCPServerCreation:
 
             server = create_mcp_server()
             tools = server._tool_manager._tools
-            assert "generate_image" in tools
-            assert "list_models" in tools
-            assert "load_model" in tools
-            assert "get_status" in tools
-            assert len(tools) == 4
+            for expected in (
+                "generate_image",
+                "list_models",
+                "load_model",
+                "get_status",
+                "get_model_details",
+                "search_civitai",
+                "download_civitai_model",
+            ):
+                assert expected in tools
+            assert len(tools) == 7
 
 
 @MCP_SKIP

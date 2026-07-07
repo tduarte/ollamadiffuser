@@ -86,6 +86,11 @@ from .lora_commands import lora
 
 cli.add_command(lora)
 
+# --- Register CivitAI commands ---
+from .civitai_commands import civitai
+
+cli.add_command(civitai)
+
 # --- Register registry commands ---
 from .registry_commands import registry
 

@@ -225,6 +225,45 @@ ollamadiffuser pull stable-diffusion-3.5-medium
 
 ---
 
+## 🎨 CivitAI & CivitAI Red
+
+Pull community models directly from **CivitAI** (`civitai.com`) and **CivitAI Red** (`civitai.red`) — checkpoints and LoRAs — in addition to Hugging Face. CivitAI ships single-file `.safetensors`, which the SD1.5/SDXL strategies load via `from_single_file`.
+
+```bash
+# Search (add --nsfw / --red for mature content on civitai.red)
+ollamadiffuser civitai search "pony" --type Checkpoint
+
+# Inspect a model before downloading (shows type, base model, trigger words)
+ollamadiffuser civitai info https://civitai.com/models/257749
+
+# Pull by URL or by model-version id (auto-detects checkpoint vs LoRA)
+ollamadiffuser civitai pull https://civitai.com/models/257749?modelVersionId=290640
+ollamadiffuser civitai pull 290640 --alias my-sdxl-model
+
+# Then run it like any other model
+ollamadiffuser run my-sdxl-model
+```
+
+**Already have models on disk?** Register them in place (no re-download, no copy). Metadata is read from adjacent `.civitai.info` / `.cm-info.json` sidecars, then a CivitAI hash lookup, then flags:
+
+```bash
+ollamadiffuser civitai import ~/models/checkpoints --recursive
+ollamadiffuser civitai import ./mystery.safetensors --type checkpoint --model-type sdxl --no-lookup
+```
+
+**Authentication** (only for gated / early-access / mature models):
+```bash
+# Create a key at https://civitai.com/user/account, then:
+export CIVITAI_API_KEY=your_key_here
+```
+The key stays local. On `civitai.red`, where bearer-token auth is unreliable, the client automatically falls back to a `?token=` query parameter.
+
+**MCP tools:** `search_civitai`, `download_civitai_model`, and `get_model_details` are exposed to AI assistants, and `list_models` now reports each model's type/base-model. LoRA/checkpoint **trigger words** are stored and auto-injected into prompts (toggle with `use_trigger_words`).
+
+> **Note:** Checkpoints for **SD1.5** and **SDXL** (incl. Pony, Illustrious, NoobAI) work out of the box. **FLUX/SD3** single-file checkpoints are gated behind `--experimental` (they are often missing text encoders/VAE). Embeddings and VAEs are planned for a later phase.
+
+---
+
 ## 🎯 Supported Models
 
 Choose from 40+ models spanning every major architecture:

@@ -237,6 +237,39 @@ class LoRAManager:
             
             return False
     
+    def lora_dir_for(self, lora_name: str) -> Path:
+        """Return (creating if needed) the storage directory for a named LoRA."""
+        lora_path = self._get_lora_path(lora_name)
+        lora_path.mkdir(parents=True, exist_ok=True)
+        return lora_path
+
+    def register_downloaded_lora(self, lora_name: str, file_path, source: str,
+                                 trained_words: Optional[List[str]] = None,
+                                 base_model: Optional[str] = None,
+                                 in_place: bool = False) -> bool:
+        """Register a LoRA from a local single file (from CivitAI or import).
+
+        Stores ``repo_id``/``weight_name`` pointing at the exact local file so the
+        existing ``load_lora`` weight-file branch loads it unchanged. ``in_place``
+        marks files that live outside the managed LoRA dir (do not delete on rm).
+        """
+        file_path = Path(file_path)
+        parent = str(file_path.parent)
+        self.config[lora_name] = {
+            "repo_id": parent,          # local dir acts as the load source
+            "weight_name": file_path.name,
+            "path": parent,
+            "source": source,
+            "trained_words": trained_words or [],
+            "base_model": base_model,
+            "in_place": in_place,
+            "downloaded_at": datetime.now().isoformat(),
+            "size": self._format_size(self._get_directory_size(file_path.parent)),
+        }
+        self._save_config()
+        logger.info(f"Registered LoRA '{lora_name}' from {file_path} (source={source})")
+        return True
+
     def load_lora(self, lora_name: str, scale: float = 1.0) -> bool:
         """Load LoRA weights into the current model"""
         try:
@@ -355,10 +388,14 @@ class LoRAManager:
             # Remove files
             lora_info = self.config[lora_name]
             lora_path = Path(lora_info["path"])
-            
-            if lora_path.exists():
+
+            # Never delete files that were imported in place (they live in the
+            # user's own directory, outside the managed LoRA store).
+            if lora_info.get("in_place"):
+                logger.info(f"LoRA {lora_name} imported in place; unregistering only, keeping files")
+            elif lora_path.exists():
                 shutil.rmtree(lora_path)
-            
+
             # Remove from configuration
             del self.config[lora_name]
             self._save_config()

@@ -7,8 +7,19 @@ import sys
 from typing import Optional
 
 from ..core.models.manager import model_manager
+from ..core.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _model_trigger_words(model_name: Optional[str]):
+    """Trigger words stored on a model's config (CivitAI checkpoints), if any."""
+    if not model_name:
+        return []
+    cfg = settings.models.get(model_name)
+    if not cfg or not cfg.parameters:
+        return []
+    return cfg.parameters.get("trained_words") or []
 
 
 def _ensure_mcp():
@@ -45,6 +56,7 @@ def create_mcp_server():
         steps: Optional[int] = None,
         guidance_scale: Optional[float] = None,
         seed: Optional[int] = None,
+        use_trigger_words: bool = True,
     ) -> Image:
         """Generate an image from a text prompt using a local diffusion model.
 
@@ -57,6 +69,8 @@ def create_mcp_server():
             steps: Number of inference steps (model-specific default if omitted)
             guidance_scale: Guidance scale (model-specific default if omitted)
             seed: Random seed for reproducibility
+            use_trigger_words: Auto-prepend the model's CivitAI trigger words if
+                they are not already present in the prompt (recommended).
         """
         if model and model_manager.get_current_model() != model:
             if not model_manager.is_model_installed(model):
@@ -74,6 +88,14 @@ def create_mcp_server():
                 "No model loaded. Load one with: load_model('model-name') "
                 "or pass model= parameter"
             )
+
+        # Auto-inject CivitAI trigger words for the loaded model when missing.
+        if use_trigger_words:
+            words = _model_trigger_words(model_manager.get_current_model())
+            missing = [w for w in words if w and w.lower() not in prompt.lower()]
+            if missing:
+                prompt = ", ".join(missing) + ", " + prompt
+                logger.info(f"Injected trigger words: {missing}")
 
         engine = model_manager.loaded_model
         result = await asyncio.to_thread(
@@ -102,17 +124,31 @@ def create_mcp_server():
         installed = model_manager.list_installed_models()
         current = model_manager.get_current_model()
 
+        # Include locally-registered models (e.g. from CivitAI) that are not in
+        # the static registry, so imported/pulled models always show up.
+        names = sorted(set(available) | set(installed))
+
         lines = ["Available models:"]
-        for name in sorted(available):
+        for name in names:
             status_parts = []
             if name in installed:
                 status_parts.append("installed")
             if name == current:
                 status_parts.append("loaded")
             suffix = f" ({', '.join(status_parts)})" if status_parts else ""
-            lines.append(f"  - {name}{suffix}")
 
-        lines.append(f"\nInstalled: {len(installed)}/{len(available)}")
+            # Annotate installed models with type + base model for selection.
+            detail = ""
+            cfg = settings.models.get(name)
+            if cfg:
+                params = cfg.parameters or {}
+                bits = [cfg.model_type]
+                if params.get("base_model"):
+                    bits.append(str(params["base_model"]))
+                detail = f" [{', '.join(b for b in bits if b)}]"
+            lines.append(f"  - {name}{suffix}{detail}")
+
+        lines.append(f"\nInstalled: {len(installed)}/{len(names)}")
         if current:
             lines.append(f"Currently loaded: {current}")
 
@@ -161,6 +197,129 @@ def create_mcp_server():
                 lines.append(f"  Device: {info.get('device', 'unknown')}")
                 lines.append(f"  Model type: {info.get('type', 'unknown')}")
 
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def get_model_details(model_name: str) -> str:
+        """Get full metadata for an installed model to help choose/use it.
+
+        Includes model type, base model, trigger words, source, and description
+        when available (populated for models pulled or imported from CivitAI).
+
+        Args:
+            model_name: Name of an installed model.
+        """
+        cfg = settings.models.get(model_name)
+        if cfg is None:
+            info = model_manager.get_model_info(model_name)
+            if not info:
+                return f"Model '{model_name}' is not installed or unknown."
+            lines = [f"{model_name}", f"  Model type: {info.get('model_type', 'unknown')}"]
+            if info.get("repo_id"):
+                lines.append(f"  Repository: {info['repo_id']}")
+            return "\n".join(lines)
+
+        params = cfg.parameters or {}
+        lines = [f"{model_name}", f"  Model type: {cfg.model_type}"]
+        if params.get("base_model"):
+            lines.append(f"  Base model: {params['base_model']}")
+        if params.get("source"):
+            lines.append(f"  Source: {params['source']}")
+        words = params.get("trained_words")
+        if words:
+            lines.append(f"  Trigger words: {', '.join(words)}")
+        if params.get("tags"):
+            lines.append(f"  Tags: {', '.join(params['tags'][:12])}")
+        if params.get("nsfw"):
+            lines.append("  Mature content: yes")
+        if params.get("description"):
+            lines.append(f"  Description: {params['description'][:400]}")
+        lines.append(f"  Path: {cfg.path}")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def search_civitai(
+        query: str,
+        model_type: Optional[str] = None,
+        base_model: Optional[str] = None,
+        limit: int = 10,
+        nsfw: bool = False,
+        red: bool = False,
+    ) -> str:
+        """Search CivitAI for downloadable models.
+
+        Args:
+            query: Keyword to search for.
+            model_type: Optional CivitAI type filter (Checkpoint, LORA, TextualInversion, VAE).
+            base_model: Optional base-model filter (e.g. 'SDXL 1.0', 'Pony', 'SD 1.5').
+            limit: Maximum number of results.
+            nsfw: Include mature content (uses civitai.red when red=True).
+            red: Search via civitai.red instead of civitai.com.
+
+        Returns a list including each result's version id, which download_civitai_model accepts.
+        """
+        from ..core.utils import civitai_client
+
+        base = civitai_client.RED_BASE if red else civitai_client.DEFAULT_BASE
+        try:
+            rows = await asyncio.to_thread(
+                civitai_client.search, query, model_type, base_model, limit, nsfw, base
+            )
+        except civitai_client.CivitaiError as e:
+            return f"Search failed: {e}"
+
+        if not rows:
+            return f"No CivitAI results for '{query}'."
+        lines = [f"CivitAI results for '{query}':"]
+        for r in rows:
+            nsfw_tag = " [NSFW]" if r.get("nsfw") else ""
+            lines.append(
+                f"  - version {r.get('version_id')}: {r.get('name')} "
+                f"({r.get('type')}, {r.get('base_model') or '?'}, "
+                f"{r.get('download_count', 0)} downloads){nsfw_tag}"
+            )
+        lines.append("\nDownload one with download_civitai_model(url_or_id=<version id>).")
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def download_civitai_model(
+        url_or_id: str,
+        model_type: Optional[str] = None,
+        alias: Optional[str] = None,
+        red: bool = False,
+        experimental: bool = False,
+    ) -> str:
+        """Download and install a model from CivitAI / CivitAI Red.
+
+        Args:
+            url_or_id: A civitai.com/civitai.red URL or a numeric model-version id.
+            model_type: Override the inferred type for checkpoints (sd15, sdxl, sd3, flux).
+            alias: Local name to register the model under.
+            red: Treat a bare id / host-less ref as civitai.red.
+            experimental: Attempt FLUX/SD3 single-file checkpoints (may be incomplete).
+
+        The API key is read from CIVITAI_API_KEY / settings; it is never passed here.
+        """
+        from ..core.utils.civitai_client import civitai_manager, CivitaiError
+
+        try:
+            result = await asyncio.to_thread(
+                lambda: civitai_manager.pull(
+                    url_or_id, model_type=model_type, alias=alias, red=red,
+                    allow_experimental=experimental)
+            )
+        except CivitaiError as e:
+            return f"Download failed: {e}"
+
+        name = result["name"]
+        category = result["content_category"]
+        lines = [f"Installed '{name}' ({result.get('model_type') or category})."]
+        if result.get("trained_words"):
+            lines.append(f"Trigger words: {', '.join(result['trained_words'])}")
+        if category == "checkpoint":
+            lines.append(f"Load and use it with: load_model('{name}') then generate_image(...).")
+        else:
+            lines.append(f"Load it onto a running model, then generate. Details: get_model_details('{name}').")
         return "\n".join(lines)
 
     return mcp_server
