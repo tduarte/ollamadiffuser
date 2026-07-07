@@ -159,8 +159,18 @@ class InferenceStrategy(ABC):
                     "retrying with UNet weights only (text-encoder part skipped)"
                 )
                 self.pipeline.load_lora_weights(unet_sd, adapter_name="default")
-            if hasattr(self.pipeline, "set_adapters") and scale != 1.0:
-                self.pipeline.set_adapters(["default"], adapter_weights=[scale])
+            # Apply the requested scale. diffusers auto-names the adapter
+            # (often "default_0", not "default"), so resolve the real name and
+            # treat a scaling failure as non-fatal — the LoRA is already loaded.
+            if scale != 1.0 and hasattr(self.pipeline, "set_adapters"):
+                try:
+                    names = None
+                    if hasattr(self.pipeline, "get_active_adapters"):
+                        names = self.pipeline.get_active_adapters()
+                    names = names or ["default"]
+                    self.pipeline.set_adapters(names, adapter_weights=[scale] * len(names))
+                except Exception as e:
+                    logger.warning(f"Loaded LoRA but could not apply scale {scale}: {e}")
             self.current_lora = {
                 "repo_id": repo_id,
                 "weight_name": weight_name,
