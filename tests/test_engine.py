@@ -55,6 +55,11 @@ class TestGetStrategy:
         from ollamadiffuser.core.inference.strategies.generic_strategy import GenericPipelineStrategy
         assert isinstance(s, GenericPipelineStrategy)
 
+    def test_qwen_strategy(self):
+        s = _get_strategy("qwen")
+        from ollamadiffuser.core.inference.strategies.qwen_strategy import QwenImageStrategy
+        assert isinstance(s, QwenImageStrategy)
+
     def test_unsupported_type(self):
         with pytest.raises(ValueError, match="Unsupported model type"):
             _get_strategy("unknown_type")

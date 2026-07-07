@@ -123,6 +123,10 @@ class FluxStrategy(InferenceStrategy):
             if key in kwargs:
                 gen_kwargs[key] = kwargs[key]
 
+        step_cb = self._diffusers_step_callback(kwargs.get("progress_callback"), steps)
+        if step_cb is not None:
+            gen_kwargs["callback_on_step_end"] = step_cb
+
         try:
             logger.info(f"Generating FLUX image: steps={steps}, guidance={guidance}, seed={used_seed}")
             output = self.pipeline(**gen_kwargs)

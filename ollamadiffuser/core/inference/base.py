@@ -128,6 +128,46 @@ class InferenceStrategy(ABC):
             self.pipeline.enable_vae_slicing()
             logger.info("Enabled VAE slicing")
 
+    # ----- Progress reporting -------------------------------------------
+    # Strategies accept an optional ``progress_callback(step, total)`` (1-based
+    # step) via generate(**kwargs) and adapt it to their backend's per-step hook
+    # (mflux CallbackRegistry / diffusers callback_on_step_end). See MLXStrategy
+    # and the diffusers strategies.
+
+    @staticmethod
+    def _safe_progress(callback, step: int, total: int, message=None) -> None:
+        """Invoke a progress callback, swallowing any error.
+
+        Contract is ``progress_callback(step, total, message=None)``; a legacy
+        2-arg callback is tolerated. A progress/reporting failure must never
+        break image generation.
+        """
+        if callback is None:
+            return
+        try:
+            try:
+                callback(step, total, message)
+            except TypeError:
+                callback(step, total)  # legacy 2-arg callback
+        except Exception:
+            logger.debug("progress callback failed", exc_info=True)
+
+    def _diffusers_step_callback(self, callback, total: int):
+        """Adapt a ``progress_callback(step, total)`` to diffusers'
+        ``callback_on_step_end(pipe, step, timestep, callback_kwargs) -> dict``.
+
+        Returns None when no callback is supplied, so callers can skip adding the
+        key entirely. diffusers passes a 0-based ``step``; we report ``step + 1``.
+        """
+        if callback is None:
+            return None
+
+        def _on_step(pipe, step, timestep, callback_kwargs):
+            self._safe_progress(callback, step + 1, total)
+            return callback_kwargs
+
+        return _on_step
+
     def load_lora_runtime(
         self, repo_id: str, weight_name: str = None, scale: float = 1.0
     ) -> bool:

@@ -76,6 +76,31 @@ _VARIANT_REQUIRED_INPUTS = {
 _VALID_QUANTIZE = (None, 4, 8)
 
 
+class _MfluxProgress:
+    """Adapts a ``progress_callback(step, total)`` to an mflux in-loop callback.
+
+    mflux's ``CallbackRegistry`` duck-types subscribers on ``call_in_loop`` and
+    invokes it with keyword args (``t``, ``seed``, ``prompt``, ``latents``,
+    ``config``, ``time_steps``). ``t`` is the 0-based step index; the total is
+    ``config.num_inference_steps``.
+    """
+
+    def __init__(self, callback):
+        self._callback = callback
+
+    def call_in_loop(self, t, config, **_):
+        InferenceStrategy._safe_progress(
+            self._callback, t + 1, config.num_inference_steps)
+
+    def call_after_loop(self, config, **_):
+        # Fires once after the final denoise step, right before VAE decode.
+        # Signals the (progress-less) decode phase so clients — and agents
+        # reading the progress — don't treat "N/N" as the finished image.
+        total = config.num_inference_steps
+        InferenceStrategy._safe_progress(
+            self._callback, total, total, "Decoding image…")
+
+
 # --------------------------------------------------------------------------
 # Apple-Silicon detection
 # --------------------------------------------------------------------------
@@ -176,10 +201,17 @@ class MLXStrategy(InferenceStrategy):
             )
             return False
 
+        logger.info(
+            f"Loading mflux {variant} model '{mlx_model_name}' "
+            f"(quantize={quantize})..."
+        )
         try:
-            model_cls, mflux_config = self._resolve_model_and_config(
-                variant, mlx_model_name
-            )
+            # Resolve (imports mflux) AND construct on the dedicated worker
+            # thread. MLX binds its GPU stream to the thread that first imports
+            # it, so the mflux import must NOT happen on the main thread — see
+            # _resolve_and_construct.
+            self._mlx_model = self._run(
+                self._resolve_and_construct, variant, mlx_model_name, quantize)
         except ImportError as e:
             logger.error(
                 "mflux is not installed. Install with: "
@@ -190,14 +222,6 @@ class MLXStrategy(InferenceStrategy):
         except ValueError as e:
             logger.error(str(e))
             return False
-
-        logger.info(
-            f"Loading mflux {variant} model '{mlx_model_name}' "
-            f"(quantize={quantize})..."
-        )
-        try:
-            self._mlx_model = self._run(
-                self._construct_mlx_model, model_cls, mflux_config, quantize)
         except Exception as e:
             logger.error(f"Failed to load MLX model: {e}", exc_info=True)
             return False
@@ -352,6 +376,24 @@ class MLXStrategy(InferenceStrategy):
 
         raise ValueError(f"Unhandled mlx_variant: {variant}")
 
+    @classmethod
+    def _resolve_and_construct(cls, variant, mlx_model_name, quantize,
+                               lora_paths=None, lora_scales=None):
+        """Resolve the mflux class/config AND construct the model, together.
+
+        MUST run on the strategy's dedicated worker thread (via ``_run``):
+        ``_resolve_model_and_config`` does ``from mflux... import``, and MLX
+        creates its Metal GPU stream on the thread that first imports it. If the
+        import happens on the main thread but generation runs on the worker
+        thread, the worker has no ``Stream(gpu, 0)`` and mflux aborts the process
+        during VAE decode. Keeping import + construction + generation on one
+        thread avoids that.
+        """
+        model_cls, mflux_config = cls._resolve_model_and_config(variant, mlx_model_name)
+        return cls._construct_mlx_model(
+            model_cls, mflux_config, quantize,
+            lora_paths=lora_paths, lora_scales=lora_scales)
+
     @staticmethod
     def _construct_mlx_model(model_cls, mflux_config, quantize,
                              lora_paths=None, lora_scales=None):
@@ -476,6 +518,19 @@ class MLXStrategy(InferenceStrategy):
                     f"MLX variant {self._variant!r} doesn't accept "
                     f"{key!r}={val!r}; dropping."
                 )
+
+        # Per-step progress: register an mflux in-loop callback (fires on the
+        # worker thread during the denoise loop). Registration mutates a plain
+        # list, safe from the caller thread.
+        cb = kwargs.get("progress_callback")
+        reg = getattr(self._mlx_model, "callbacks", None)
+        if cb is not None and reg is not None:
+            # No unregister API — drop any prior instance so repeated generations
+            # on the reused model don't stack duplicate reporters. Our adapter
+            # subscribes to both in_loop and after_loop.
+            reg.in_loop = [c for c in reg.in_loop if not isinstance(c, _MfluxProgress)]
+            reg.after_loop = [c for c in reg.after_loop if not isinstance(c, _MfluxProgress)]
+            reg.register(_MfluxProgress(cb))
 
         logger.info(
             f"MLX generating ({self._variant}): "
@@ -606,9 +661,10 @@ class MLXStrategy(InferenceStrategy):
         variant = params.get("mlx_variant", "flux1")
         mlx_model_name = params.get("mlx_model_name")
         quantize = params.get("quantize")
-        model_cls, mflux_config = self._resolve_model_and_config(variant, mlx_model_name)
+        # Resolve (imports mflux) + construct on the worker thread — see
+        # _resolve_and_construct for why the import must not run on the caller.
         return self._run(
-            self._construct_mlx_model, model_cls, mflux_config, quantize,
+            self._resolve_and_construct, variant, mlx_model_name, quantize,
             lora_paths=lora_paths, lora_scales=lora_scales)
 
     @staticmethod

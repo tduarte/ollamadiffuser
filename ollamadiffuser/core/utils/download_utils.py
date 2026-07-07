@@ -465,7 +465,21 @@ def check_download_integrity(local_dir: str, repo_id: str) -> bool:
         
         # Determine model type based on repo_id
         is_controlnet = 'controlnet' in repo_id.lower()
-        
+
+        # Single-file checkpoint repos (e.g. Qwen-Image transformers) have no
+        # model_index.json and no component subfolders — just a .safetensors that
+        # gets assembled onto base components at load time. Consider them complete
+        # when at least one non-empty .safetensors is present.
+        has_model_index = (local_path / 'model_index.json').exists()
+        if not is_controlnet and not has_model_index:
+            safetensors = [
+                f for f in local_path.rglob('*.safetensors')
+                if f.is_file() and f.stat().st_size > 0
+            ]
+            if safetensors:
+                logger.info("Single-file checkpoint integrity check passed")
+                return True
+
         # Check for essential files based on model type
         if is_controlnet:
             # ControlNet models have different essential files
