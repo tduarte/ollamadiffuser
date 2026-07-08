@@ -7,6 +7,8 @@ import os
 import sys
 from typing import Optional
 
+from PIL import Image as PILImage
+
 from ..core.models.manager import model_manager
 from ..core.config.settings import settings
 from ..core.config.model_registry import model_registry
@@ -26,17 +28,22 @@ _ANATOMY_NEGATIVE = (
 )
 
 
-def _merge_negatives(negative_prompt: str, add_anatomy: bool) -> str:
-    """Append the anatomy negatives to the user's negative prompt, de-duped."""
-    if not add_anatomy:
-        return negative_prompt
+def _append_negatives(negative_prompt: str, terms: str) -> str:
+    """Append comma-separated `terms` to `negative_prompt`, de-duped case-insensitively."""
     have = {t.strip().lower() for t in (negative_prompt or "").split(",") if t.strip()}
-    extra = [t.strip() for t in _ANATOMY_NEGATIVE.split(",")
+    extra = [t.strip() for t in terms.split(",")
              if t.strip() and t.strip().lower() not in have]
     if not extra:
         return negative_prompt
     return (negative_prompt + ", " + ", ".join(extra)).strip(", ") if negative_prompt \
         else ", ".join(extra)
+
+
+def _merge_negatives(negative_prompt: str, add_anatomy: bool) -> str:
+    """Append the anatomy negatives to the user's negative prompt, de-duped."""
+    if not add_anatomy:
+        return negative_prompt
+    return _append_negatives(negative_prompt, _ANATOMY_NEGATIVE)
 
 
 def _model_trigger_words(model_name: Optional[str]):
@@ -72,6 +79,50 @@ def _model_type_and_params(model_name: str):
     return model_type, params
 
 
+def _checkpoint_arch(model_name: Optional[str]):
+    """Normalized architecture of a checkpoint for LoRA compatibility (sdxl/sd15/sd3/flux/
+    qwen/z-image), or None if unknown. SDXL/Pony/Illustrious all collapse to 'sdxl'."""
+    if not model_name:
+        return None
+    mt, params = _model_type_and_params(model_name)
+    mt = (mt or "").lower()
+    if mt == "mlx":
+        variant = str(params.get("mlx_variant") or "").lower()
+        if variant.startswith("flux"):
+            return "flux"
+        if "qwen" in variant:
+            return "qwen"
+        if "z_image" in variant or "z-image" in variant:
+            return "z-image"
+        return "flux"
+    if mt in ("sdxl", "controlnet_sdxl"):
+        return "sdxl"
+    if mt in ("sd15", "controlnet_sd15"):
+        return "sd15"
+    return mt or None
+
+
+def _lora_arch(base_model: Optional[str]):
+    """Normalized architecture a LoRA targets, from its CivitAI base_model string; None if
+    unknown (e.g. HF LoRAs that carry no base_model)."""
+    if not base_model:
+        return None
+    from ..core.utils.civitai_client import map_base_model
+    return map_base_model(base_model)
+
+
+def _compat_note(lora_base_model: Optional[str], loaded_arch: Optional[str]) -> str:
+    """Short compatibility marker for a LoRA vs the loaded checkpoint arch, or '' when no
+    model is loaded / either arch is unknown."""
+    if not loaded_arch:
+        return ""
+    la = _lora_arch(lora_base_model)
+    if la is None:
+        return "  (base unknown — may not apply)"
+    return f"  ✓ fits {loaded_arch}" if la == loaded_arch else \
+        f"  ✗ needs {la} (loaded: {loaded_arch})"
+
+
 def _ensure_mcp():
     """Check that the mcp package is available."""
     try:
@@ -97,8 +148,10 @@ def create_mcp_server():
             "filesystem. Models and LoRAs are registered with ollamadiffuser (in "
             "~/.ollamadiffuser), not just files on disk, and each carries metadata you need:\n"
             "  - model_guide(name?): what each base model is good for, a quality score, whether "
-            "it needs Danbooru or Pony 'score_' tags, its recommended settings, and how far you "
-            "can tune them. CALL model_guide('<model>') BEFORE generating with a model — "
+            "it needs Danbooru or Pony 'score_' tags, HOW to prompt it (word order, (tag:1.2) "
+            "weighting, BREAK, labeled Subject:/Pose:/Camera: sections, negative-prompt support), "
+            "a realism recipe for realism-tuned checkpoints, its recommended settings, and how "
+            "far you can tune them. CALL model_guide('<model>') BEFORE generating with a model — "
             "generate_image REFUSES models you have not consulted, and the first generation must "
             "use the recommended settings it gives.\n"
             "  - list_models / get_model_details(name): installed models, their type, base model, "
@@ -118,6 +171,30 @@ def create_mcp_server():
             "'score_9, score_8_up, score_7_up' and Danbooru tags, while FLUX/Klein want plain "
             "natural language; model_guide tells you which. The ANATOMY REVIEW tuning suggestions "
             "below are subordinate to the per-model tuning ranges model_guide returns.\n"
+            "IMAGE-TO-IMAGE / EDIT / UPSCALE: generate_image can also take an image. model_guide "
+            "reports each model's image_ops. Multi-pass pipeline: draft with a cheap/fast model "
+            "(txt2img) -> refine/restyle by feeding that image back (generate_image with "
+            "from_last='init' + strength: ~0.3 keeps composition and improves quality, ~0.6 "
+            "restyles) -> optional instruction EDIT with an edit model (flux.1-kontext-dev-mlx or "
+            "qwen-image-edit-mlx: from_last='init' and describe the change in the prompt) -> "
+            "optional UPSCALE (load flux.1-controlnet-upscaler-mlx, from_last='control', set a "
+            "larger width/height). QUALITY DIRECTION: refine LAST with the HIGHER-quality model — "
+            "e.g. draft on SDXL then refine on Klein for quality; only go Klein->Pony when the "
+            "GOAL is an anime restyle, not higher fidelity. Each pass is its own generate_image "
+            "call and needs its model briefed via model_guide first.\n"
+            "REALISM & ORDER OF OPERATIONS: the PROMPT and NEGATIVE tags are the DOMINANT quality "
+            "lever — LoRAs and guidance are secondary polish. For a realism-tuned Pony/SDXL "
+            "checkpoint that still looks cartoonish, first fix the PROMPT (add photo/realistic "
+            "tags, drop 'source_anime') and NEGATIVES (cartoon, anime, illustration, 3d render, "
+            "plastic skin — generate_image auto-adds these when it detects a realism checkpoint) "
+            "before reaching for a LoRA. Follow model_guide's realism recipe. Apply LoRAs at "
+            "MODERATE weight (0.5-0.8, not 1.0). Note: many top 'photorealism' LoRAs are FLUX or "
+            "plain-SDXL and are INCOMPATIBLE with a Pony checkpoint — apply_lora blocks those, "
+            "and list_loras/search_civitai flag them.\n"
+            "A/B COMPARE: to attribute a quality change correctly, fix a `seed`, generate a "
+            "baseline, then change ONE thing (apply_lora, or a prompt tweak) and regenerate with "
+            "the SAME seed. Changing prompt + LoRA + seed at once makes the result impossible to "
+            "attribute. Establish a prompt-only baseline before adding LoRAs.\n"
             "PROMPT QUALITY: before generating, if the user's prompt is short or vague (e.g. "
             "'a cat', 'a warrior'), first ENRICH it into a detailed prompt — a well-specified "
             "prompt improves results more than any parameter. Preserve the user's intent and any "
@@ -139,7 +216,10 @@ def create_mcp_server():
             "for a user-driven run until you have shown the user a summary of exactly what you "
             "will run and they have approved it. The summary must include: the final (enriched) "
             "prompt and the negative prompt; the model; any LoRA/embedding/VAE and its scale; and "
-            "the key parameters (steps, guidance_scale, width x height, seed). Then ask the user "
+            "the key parameters (steps, guidance_scale, width x height, seed). For an image "
+            "conditioned pass (img2img refine / edit / upscale) also state the pass type, the "
+            "source image (the previous result via from_last, or a path), and the strength (or the "
+            "target size for an upscale). Then ask the user "
             "to proceed, and only call generate_image once they confirm. This gate covers "
             "user-driven generations — a new request, or a change the user asks for (different "
             "prompt, model, LoRA, or params). It does NOT cover your OWN automatic anatomy-fix "
@@ -167,6 +247,9 @@ def create_mcp_server():
     # first generation. State resets on server restart; the agent simply re-briefs.
     _briefed: set = set()
     _generated: set = set()
+    # The most recent generated image, for chaining passes (from_last=). Holds
+    # {"image": PIL.Image, "model": name}. In-memory; resets on server restart.
+    _last_image: dict = {}
 
     @mcp_server.tool()
     async def generate_image(
@@ -180,6 +263,12 @@ def create_mcp_server():
         seed: Optional[int] = None,
         use_trigger_words: bool = True,
         avoid_anatomy_errors: bool = True,
+        avoid_cartoon: Optional[bool] = None,
+        input_image: Optional[str] = None,
+        control_image: Optional[str] = None,
+        from_last: Optional[str] = None,
+        strength: float = 0.75,
+        controlnet_conditioning_scale: float = 1.0,
         ctx: Context = None,
     ) -> Image:
         """Generate an image from a local diffusion model; returns the finished image.
@@ -223,6 +312,24 @@ def create_mcp_server():
                 they are not already present in the prompt (recommended).
             avoid_anatomy_errors: Merge curated anatomy terms (bad hands, extra
                 fingers, deformed, ...) into the negative prompt (recommended).
+            avoid_cartoon: Merge anti-cartoon negatives (cartoon, anime, 3d render,
+                illustration, plastic skin, ...) for realism work. None = auto: on
+                when the checkpoint is realism-oriented AND uses negatives; True/False
+                forces it. No effect on models that ignore negatives (FLUX/Klein/turbo)
+                — steer those toward realism with positive phrasing instead.
+            input_image: Path to an init/source image for img2img (refine/restyle)
+                or for an edit model (kontext / qwen-image-edit — put the change as
+                an instruction in `prompt`). Only for models whose model_guide
+                image_ops include img2img or edit.
+            control_image: Path to a control/source image for the ControlNet upscaler
+                or canny/depth models (e.g. control_image=<low-res> for upscaling,
+                with a larger width/height). Only for models with an upscale/control op.
+            from_last: Reuse the previous generation instead of a path — "init" feeds
+                it as `input_image` (img2img/edit), "control" as `control_image`
+                (upscale). Great for draft -> refine -> upscale chains.
+            strength: img2img denoise strength (only used with an init image). Low
+                (~0.2-0.4) refines/keeps composition; high (~0.5-0.7) restyles.
+            controlnet_conditioning_scale: Strength of a control_image's influence.
         """
         negative_prompt = _merge_negatives(negative_prompt, avoid_anatomy_errors)
         # Decide whether we must (re)load. get_current_model() returns the
@@ -233,6 +340,10 @@ def create_mcp_server():
         # load and then fails with "No model loaded".
         want = model or model_manager.get_current_model()
 
+        # Resolved image inputs for img2img/edit (init_img) and control/upscale (ctrl_img).
+        init_img = None
+        ctrl_img = None
+
         # --- model_guide gate -------------------------------------------------
         # Quantized local models need the right settings. Require the agent to
         # consult model_guide(<model>) before generating, and force the model's
@@ -241,6 +352,20 @@ def create_mcp_server():
         if want:
             _mt, _params = _model_type_and_params(want)
             _rec = _model_guide.recommended_settings(want, _mt, _params)
+
+            # Anti-cartoon negatives for realism work. Auto when the checkpoint reads as
+            # realism-oriented AND the model actually responds to negatives; skipped for
+            # models that ignore negatives (FLUX/Klein/turbo — steer those positively).
+            _fam = _model_guide.resolve_family(want, _mt, _params)
+            _uses_neg = _model_guide.negatives_mode(_fam) != "ignored"
+            _want_cartoon = avoid_cartoon if avoid_cartoon is not None else \
+                (_uses_neg and _model_guide.is_realism(want, _params))
+            if _want_cartoon and _uses_neg:
+                terms = _model_guide.ANTI_CARTOON_NEGATIVE
+                if _fam == "pony":
+                    terms += ", " + _model_guide.PONY_SCORE_NEGATIVE
+                negative_prompt = _append_negatives(negative_prompt, terms)
+
             if want not in _briefed:
                 raise ValueError(
                     f"Blocked: call model_guide('{want}') before generating with it — "
@@ -248,12 +373,50 @@ def create_mcp_server():
                     f"{_model_guide.format_full(want, _mt, _params)}\n\n"
                     f"Then retry generate_image using the recommended settings above."
                 )
+
+            # Resolve image inputs (from_last chains the previous result; paths are loaded).
+            if from_last is not None and from_last not in ("init", "control"):
+                raise ValueError("from_last must be 'init' or 'control'.")
+            if from_last and not _last_image.get("image"):
+                raise ValueError(
+                    "from_last was set but there is no previous image to chain. "
+                    "Generate one first, or pass input_image/control_image as a path."
+                )
+            if input_image:
+                init_img = PILImage.open(input_image).convert("RGB")
+            elif from_last == "init":
+                init_img = _last_image.get("image")
+            if control_image:
+                ctrl_img = PILImage.open(control_image).convert("RGB")
+            elif from_last == "control":
+                ctrl_img = _last_image.get("image")
+
+            # Validate the requested op against the model's capabilities.
+            _ops = _model_guide.image_ops(want, _mt, _params)
+            if init_img is not None and not _model_guide.accepts_init_image(_ops):
+                raise ValueError(
+                    f"'{want}' does not support an init/edit image (its image ops are "
+                    f"{_ops}). Use a model with img2img or edit, then retry — see "
+                    f"model_guide('{want}')."
+                )
+            if ctrl_img is not None and not _model_guide.accepts_control_image(_ops):
+                raise ValueError(
+                    f"'{want}' does not take a control_image (its image ops are {_ops}). "
+                    f"For upscaling use flux.1-controlnet-upscaler-mlx; for edges/depth use "
+                    f"the canny/depth models — see model_guide('{want}')."
+                )
+            image_conditioned = init_img is not None or ctrl_img is not None
+
+            # Force recommended settings on the FIRST pure-txt2img generation. Image-
+            # conditioned passes (img2img/edit/upscale) are exempt from the hard check —
+            # strength/edit/control change the optimal step count — but omitted params
+            # still default to the recommended values.
             if want not in _generated:
                 _rs, _rg = _rec.get("steps"), _rec.get("guidance_scale")
                 if _rs is not None:
                     if steps is None:
                         steps = _rs
-                    elif steps != _rs:
+                    elif steps != _rs and not image_conditioned:
                         raise ValueError(
                             f"First generation with '{want}' must use the recommended "
                             f"steps={_rs} (you passed steps={steps}). Recommended: "
@@ -262,7 +425,7 @@ def create_mcp_server():
                 if _rg is not None:
                     if guidance_scale is None:
                         guidance_scale = _rg
-                    elif abs(float(guidance_scale) - float(_rg)) > 1e-6:
+                    elif abs(float(guidance_scale) - float(_rg)) > 1e-6 and not image_conditioned:
                         raise ValueError(
                             f"First generation with '{want}' must use the recommended "
                             f"guidance_scale={_rg} (you passed guidance_scale={guidance_scale}). "
@@ -322,8 +485,7 @@ def create_mcp_server():
                 except Exception:
                     pass
 
-        result = await asyncio.to_thread(
-            engine.generate_image,
+        gen_kwargs = dict(
             prompt=prompt,
             negative_prompt=negative_prompt,
             num_inference_steps=steps,
@@ -333,10 +495,23 @@ def create_mcp_server():
             seed=seed,
             progress_callback=progress_callback,
         )
+        # Image conditioning: init image → img2img/edit (+strength); control image →
+        # ControlNet/upscaler. The engine forwards these to the active strategy.
+        if init_img is not None:
+            gen_kwargs["image"] = init_img
+            gen_kwargs["strength"] = strength
+        if ctrl_img is not None:
+            gen_kwargs["control_image"] = ctrl_img
+            gen_kwargs["controlnet_conditioning_scale"] = controlnet_conditioning_scale
+
+        result = await asyncio.to_thread(engine.generate_image, **gen_kwargs)
 
         # First generation for this model succeeded — subsequent calls may tune freely.
         if want:
             _generated.add(want)
+        # Remember the result so a later pass can chain it (from_last=).
+        _last_image["image"] = result
+        _last_image["model"] = want
 
         buf = io.BytesIO()
         result.save(buf, format="PNG")
@@ -543,15 +718,24 @@ def create_mcp_server():
 
         if not rows:
             return f"No CivitAI results for '{query}'."
+        loaded_arch = _checkpoint_arch(model_manager.get_current_model()) \
+            if model_manager.is_model_loaded() else None
         lines = [f"CivitAI results for '{query}':"]
         for r in rows:
             nsfw_tag = " [NSFW]" if r.get("nsfw") else ""
+            # Flag compatibility for LoRA-type results against the loaded checkpoint.
+            compat = ""
+            if loaded_arch and (r.get("type") or "").lower() in ("lora", "locon", "lycoris"):
+                compat = _compat_note(r.get("base_model"), loaded_arch)
             lines.append(
                 f"  - version {r.get('version_id')}: {r.get('name')} "
                 f"({r.get('type')}, {r.get('base_model') or '?'}, "
-                f"{r.get('download_count', 0)} downloads){nsfw_tag}"
+                f"{r.get('download_count', 0)} downloads){nsfw_tag}{compat}"
             )
-        lines.append("\nDownload one with download_civitai_model(url_or_id=<version id>).")
+        if loaded_arch:
+            lines.append(f"\n(✗ = incompatible with the loaded {loaded_arch} checkpoint — many "
+                         "top 'photorealism' LoRAs are FLUX/SDXL and won't apply to it.)")
+        lines.append("Download one with download_civitai_model(url_or_id=<version id>).")
         return "\n".join(lines)
 
     @mcp_server.tool()
@@ -695,6 +879,8 @@ def create_mcp_server():
         if not loras:
             return "No LoRAs installed. Download some with download_civitai_model(...)."
         current = lora_manager.get_current_lora()
+        loaded_arch = _checkpoint_arch(model_manager.get_current_model()) \
+            if model_manager.is_model_loaded() else None
         lines = ["Installed LoRAs:"]
         shown = 0
         for name, info in sorted(loras.items()):
@@ -705,10 +891,13 @@ def create_mcp_server():
             tw = info.get("trained_words") or []
             tags = " [loaded]" if name == current else ""
             trig = f" — triggers: {', '.join(tw)}" if tw else ""
-            lines.append(f"  - {name}{tags} ({bm or 'unknown base'}){trig}")
+            compat = _compat_note(bm, loaded_arch)
+            lines.append(f"  - {name}{tags} ({bm or 'unknown base'}){compat}{trig}")
         if shown == 0:
             return f"No LoRAs match base model '{base_model}'."
-        lines.append("\nApply one to the loaded model with apply_lora('<name>').")
+        if loaded_arch:
+            lines.append(f"\n(Compatibility shown vs the loaded {loaded_arch} checkpoint.)")
+        lines.append("Apply one to the loaded model with apply_lora('<name>').")
         return "\n".join(lines)
 
     @mcp_server.tool()
@@ -732,6 +921,8 @@ def create_mcp_server():
             return "No LoRAs installed. Download some with download_civitai_model(...)."
         q = query.lower().strip()
         current = lora_manager.get_current_lora()
+        loaded_arch = _checkpoint_arch(model_manager.get_current_model()) \
+            if model_manager.is_model_loaded() else None
         rows = []
         for name, info in loras.items():
             bm = info.get("base_model") or ""
@@ -750,21 +941,29 @@ def create_mcp_server():
         for name, bm, tw, loaded in rows[:limit]:
             tag = " [loaded]" if loaded else ""
             trig = f" — triggers: {', '.join(tw)}" if tw else ""
-            lines.append(f"  - {name}{tag} ({bm or 'unknown base'}){trig}")
+            compat = _compat_note(bm, loaded_arch)
+            lines.append(f"  - {name}{tag} ({bm or 'unknown base'}){compat}{trig}")
         if len(rows) > limit:
             lines.append(f"  ... and {len(rows) - limit} more (narrow with query or base_model).")
-        lines.append("\nApply one to the loaded model with apply_lora('<name>').")
+        if loaded_arch:
+            lines.append(f"\n(Compatibility shown vs the loaded {loaded_arch} checkpoint.)")
+        lines.append("Apply one to the loaded model with apply_lora('<name>').")
         return "\n".join(lines)
 
     @mcp_server.tool()
-    async def apply_lora(name: str, scale: float = 1.0) -> str:
+    async def apply_lora(name: str, scale: Optional[float] = None) -> str:
         """Apply an installed LoRA to the currently-loaded model.
 
         Its trigger words are then auto-injected into generate_image prompts.
+        Remember the order of operations: the prompt/negative tags are the dominant
+        quality lever; a LoRA is secondary polish — apply it at a MODERATE weight and
+        A/B it against a fixed seed (see the instructions) rather than trusting 1.0.
 
         Args:
             name: LoRA name (see list_loras).
-            scale: LoRA strength (default 1.0).
+            scale: LoRA strength. Omit to use the LoRA's suggested weight if known, else
+                ~0.7. Style/realism LoRAs usually want 0.5-0.8 (1.0 tends to over-process
+                and add artifacts); character/concept LoRAs can go higher.
         """
         from ..core.utils.lora_manager import lora_manager
 
@@ -775,14 +974,39 @@ def create_mcp_server():
         if resolved is None:
             return (f"No LoRA matches '{name}'. Use list_loras() or find_loras('{name}') "
                     "to see the exact registered names.")
-        ok = await asyncio.to_thread(lora_manager.load_lora, resolved, scale)
+        info = lora_manager.get_lora_info(resolved) or {}
+
+        # Base-model compatibility: block cross-arch (e.g. FLUX LoRA on SDXL) — it silently
+        # fails / corrupts output. Skip when the LoRA's base is unknown (HF LoRAs).
+        loaded = model_manager.get_current_model()
+        loaded_arch = _checkpoint_arch(loaded)
+        lora_base = info.get("base_model")
+        lora_a = _lora_arch(lora_base)
+        if loaded_arch and lora_a and loaded_arch != lora_a:
+            return (f"Incompatible: LoRA '{resolved}' is for {lora_base} ({lora_a}), but the "
+                    f"loaded checkpoint '{loaded}' is {loaded_arch}. It won't apply correctly. "
+                    f"Find a {loaded_arch} LoRA with find_loras(...) / list_loras().")
+
+        # Resolve weight: explicit > per-LoRA suggested > moderate default.
+        suggested = info.get("suggested_weight")
+        used_scale = scale if scale is not None else (suggested if suggested else 0.7)
+
+        ok = await asyncio.to_thread(lora_manager.load_lora, resolved, used_scale)
         if not ok:
             return (f"Found LoRA '{resolved}' but it failed to load onto the current model "
-                    "— it may be for a different base model (check its base with get_model_details / list_loras).")
-        info = lora_manager.get_lora_info(resolved) or {}
+                    "— it may be for a different base model (check list_loras / get_model_details).")
         tw = info.get("trained_words") or []
         hint = f" Trigger words to add to the prompt: {', '.join(tw)}." if tw else ""
-        return f"LoRA '{resolved}' applied at scale {scale}.{hint}"
+        if scale is None:
+            why = (f"its suggested weight" if suggested else "a moderate default")
+            note = (f" (used {why}; style/realism LoRAs usually 0.5-0.8, character/concept "
+                    f"can go higher — A/B it at a fixed seed).")
+        elif scale >= 0.9:
+            note = (" (high weight — if the image looks over-processed/artifacted, drop to "
+                    "~0.6-0.8 and A/B at the same seed).")
+        else:
+            note = ""
+        return f"LoRA '{resolved}' applied at scale {used_scale}.{note}{hint}"
 
     @mcp_server.tool()
     async def load_embedding(name: str) -> str:

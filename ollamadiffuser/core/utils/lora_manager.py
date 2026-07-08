@@ -18,6 +18,31 @@ from .download_utils import robust_file_download
 
 logger = logging.getLogger(__name__)
 
+
+def parse_suggested_weight(text: Optional[str]) -> Optional[float]:
+    """Best-effort extract a suggested LoRA weight/strength from free text.
+
+    CivitAI exposes no structured recommended-weight, but authors often write it in the
+    description ("recommended weight: 0.7", "strength 0.6-0.8"). Returns the value (midpoint
+    of a range) when a weight/strength keyword sits near a plausible number, else None.
+    """
+    if not text:
+        return None
+    low = text.lower()
+    # A weight/strength keyword followed (within a few chars) by a number or range.
+    m = re.search(r"(?:weight|strength)\D{0,12}?(\d(?:\.\d+)?)(?:\s*[-–to]{1,3}\s*(\d(?:\.\d+)?))?",
+                  low)
+    if not m:
+        return None
+    try:
+        lo = float(m.group(1))
+        hi = float(m.group(2)) if m.group(2) else lo
+    except ValueError:
+        return None
+    val = (lo + hi) / 2.0
+    # Plausible LoRA weights only (ignore stray numbers like step counts).
+    return round(val, 2) if 0.0 < val <= 2.0 else None
+
 class LoRAManager:
     """Manager for LoRA weights"""
     
@@ -293,12 +318,14 @@ class LoRAManager:
     def register_downloaded_lora(self, lora_name: str, file_path, source: str,
                                  trained_words: Optional[List[str]] = None,
                                  base_model: Optional[str] = None,
-                                 in_place: bool = False) -> bool:
+                                 in_place: bool = False,
+                                 description: Optional[str] = None) -> bool:
         """Register a LoRA from a local single file (from CivitAI or import).
 
         Stores ``repo_id``/``weight_name`` pointing at the exact local file so the
         existing ``load_lora`` weight-file branch loads it unchanged. ``in_place``
         marks files that live outside the managed LoRA dir (do not delete on rm).
+        ``description`` (when available) is scanned for a suggested weight/strength.
         """
         file_path = Path(file_path)
         parent = str(file_path.parent)
@@ -312,6 +339,7 @@ class LoRAManager:
             "in_place": in_place,
             "downloaded_at": datetime.now().isoformat(),
             "size": self._format_size(self._get_directory_size(file_path.parent)),
+            "suggested_weight": parse_suggested_weight(description),
         }
         self._save_config()
         logger.info(f"Registered LoRA '{lora_name}' from {file_path} (source={source})")

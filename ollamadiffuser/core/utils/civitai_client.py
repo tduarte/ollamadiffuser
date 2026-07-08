@@ -714,7 +714,7 @@ class CivitaiManager:
 
         lora_manager.register_downloaded_lora(
             name, dest, source="civitai", trained_words=version.trained_words,
-            base_model=version.base_model)
+            base_model=version.base_model, description=version.description)
         logger.info("Registered CivitAI LoRA '%s'", name)
         return {"name": name, "content_category": "lora",
                 "model_type": version.model_type, "path": str(target_dir),

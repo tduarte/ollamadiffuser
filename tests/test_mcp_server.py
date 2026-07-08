@@ -238,6 +238,61 @@ class TestModelGuideResolver:
             {"num_inference_steps": 50, "guidance_scale": 7.5})
         assert rec2["steps"] == 50 and rec2["guidance_scale"] == 7.5
 
+    def test_image_ops(self):
+        from ollamadiffuser.core.config import model_guide as mg
+
+        def ops(name, mt, **p):
+            return mg.image_ops(name, mt, p)
+
+        assert ops("flux.2-klein-9b-mlx", "mlx",
+                   mlx_variant="flux2", mlx_model_name="klein-9b") == ["txt2img", "img2img"]
+        assert ops("qwen-image-edit-mlx", "mlx",
+                   mlx_variant="qwen-image", mlx_model_name="qwen-image-edit") == ["edit"]
+        assert ops("flux.1-kontext-dev-mlx", "mlx",
+                   mlx_variant="flux1-kontext", mlx_model_name="dev") == ["edit"]
+        assert ops("flux.1-controlnet-upscaler-mlx", "mlx",
+                   mlx_variant="flux1-controlnet", mlx_model_name="upscaler") == ["upscale"]
+        assert ops("flux.1-fill-dev-mlx", "mlx",
+                   mlx_variant="flux1-fill", mlx_model_name="dev") == ["inpaint"]
+        assert ops("stable-diffusion-xl-base", "sdxl") == ["txt2img", "img2img"]
+
+        # init vs control slot helpers
+        assert mg.accepts_init_image(["txt2img", "img2img"]) is True
+        assert mg.accepts_control_image(["txt2img", "img2img"]) is False
+        assert mg.accepts_control_image(["upscale"]) is True
+        assert mg.accepts_init_image(["edit"]) is True
+
+    def test_realism_detection(self):
+        from ollamadiffuser.core.config import model_guide as mg
+
+        assert mg.is_realism("ponyrealism_v23ultra", {"base_model": "Pony"}) is True
+        assert mg.is_realism("cyberrealistic_pony", {"base_model": "Pony"}) is True
+        assert mg.is_realism("SomeAnimeMix", {"base_model": "Pony", "tags": ["anime"]}) is False
+        # Realism recipe drops source_anime and, for a model that uses negatives, lists them.
+        recipe = mg.realism_recipe("pony", {})
+        assert "source_pony" in recipe and "cartoon" in recipe
+
+    def test_prompting_and_negatives(self):
+        from ollamadiffuser.core.config import model_guide as mg
+
+        assert mg.negatives_mode("pony") == "strong"
+        assert mg.negatives_mode("flux2-klein") == "ignored"
+        assert mg.negatives_mode("flux-schnell") == "ignored"
+        assert mg.negatives_mode("z-image-turbo") == "ignored"
+        pony = mg.prompting_info("pony")
+        assert pony["supports_weighting"] and pony["supports_break"]
+        klein = mg.prompting_info("flux2-klein")
+        assert klein["supports_sections"] and not klein["supports_weighting"]
+        assert klein["negatives"] == "ignored"
+
+    def test_parse_suggested_weight(self):
+        from ollamadiffuser.core.utils.lora_manager import parse_suggested_weight
+
+        assert parse_suggested_weight("recommended weight: 0.7") == 0.7
+        assert parse_suggested_weight("use strength 0.6-0.8") == 0.7
+        assert parse_suggested_weight("a great detail lora") is None
+        assert parse_suggested_weight("trained for 30 steps") is None
+
 
 @MCP_SKIP
 class TestModelGuideTool:
@@ -325,3 +380,149 @@ class TestGenerateGuideGate:
             kw = mm.loaded_model.generate_image.call_args.kwargs
             assert kw["num_inference_steps"] == 8
             assert kw["guidance_scale"] == 2.0
+
+
+@MCP_SKIP
+class TestImageConditioning:
+    def test_img2img_from_last(self):
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            asyncio.run(server.call_tool(
+                "generate_image", {"prompt": "draft", "model": "flux.1-schnell"}))  # txt2img
+            asyncio.run(server.call_tool(
+                "generate_image",
+                {"prompt": "refine", "model": "flux.1-schnell",
+                 "from_last": "init", "strength": 0.35}))  # img2img off the last result
+            kw = mm.loaded_model.generate_image.call_args.kwargs
+            assert kw.get("image") is not None
+            assert kw.get("strength") == 0.35
+
+    def test_img2img_first_gen_not_forced(self):
+        # An image-conditioned FIRST generation is exempt from the recommended-settings gate.
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            img = PILImage.new("RGB", (16, 16), "green")
+            with patch("ollamadiffuser.mcp.server.PILImage.open", return_value=img):
+                asyncio.run(server.call_tool(
+                    "generate_image",
+                    {"prompt": "x", "model": "flux.1-schnell",
+                     "input_image": "whatever.png", "steps": 22}))  # off-recommended, allowed
+            kw = mm.loaded_model.generate_image.call_args.kwargs
+            assert kw["num_inference_steps"] == 22
+            assert kw.get("image") is not None
+
+    def test_control_image_rejected_on_non_control_model(self):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            img = PILImage.new("RGB", (16, 16), "green")
+            with patch("ollamadiffuser.mcp.server.PILImage.open", return_value=img):
+                with pytest.raises(ToolError, match="does not take a control_image"):
+                    asyncio.run(server.call_tool(
+                        "generate_image",
+                        {"prompt": "x", "model": "flux.1-schnell",
+                         "control_image": "ctrl.png"}))
+            mm.loaded_model.generate_image.assert_not_called()
+
+    def test_from_last_without_prior_errors(self):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            with pytest.raises(ToolError, match="no previous image"):
+                asyncio.run(server.call_tool(
+                    "generate_image",
+                    {"prompt": "x", "model": "flux.1-schnell", "from_last": "init"}))
+
+
+def _realism_pony_settings():
+    from ollamadiffuser.core.config.settings import ModelConfig
+    return {"ponyrealism": ModelConfig(
+        name="ponyrealism", path="/x", model_type="sdxl",
+        parameters={"base_model": "Pony", "num_inference_steps": 28, "guidance_scale": 6.0})}
+
+
+@MCP_SKIP
+class TestRealismNegatives:
+    def _run(self, model, settings_models, args):
+        import ollamadiffuser.mcp.server as srv
+        mm = _gen_manager(model)
+        with patch.object(srv, "model_manager", mm), \
+                patch.object(srv.settings, "models", settings_models):
+            server = srv.create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": model}))
+            asyncio.run(server.call_tool("generate_image", {**args, "model": model}))
+            return mm.loaded_model.generate_image.call_args.kwargs["negative_prompt"]
+
+    def test_auto_merge_on_realism_pony(self):
+        neg = self._run("ponyrealism", _realism_pony_settings(), {"prompt": "a woman"})
+        assert "cartoon" in neg and "anime" in neg
+        assert "score_6" in neg  # pony-only score negatives
+
+    def test_opt_out(self):
+        neg = self._run("ponyrealism", _realism_pony_settings(),
+                        {"prompt": "a woman", "avoid_cartoon": False})
+        assert "cartoon" not in neg
+
+    def test_not_merged_when_negatives_ignored(self):
+        # flux.1-schnell ignores negatives → never auto-merge anti-cartoon terms.
+        neg = self._run("flux.1-schnell", {}, {"prompt": "a woman"})
+        assert "cartoon" not in neg
+
+
+@MCP_SKIP
+class TestApplyLora:
+    def _server(self, lora_info, loaded="ponyrealism"):
+        import ollamadiffuser.mcp.server as srv
+        mm = _gen_manager(loaded)
+        lmm = MagicMock()
+        lmm.resolve_lora_name.return_value = "thelora"
+        lmm.get_lora_info.return_value = lora_info
+        lmm.load_lora.return_value = True
+        p1 = patch.object(srv, "model_manager", mm)
+        p2 = patch.object(srv.settings, "models", _realism_pony_settings())
+        p3 = patch("ollamadiffuser.core.utils.lora_manager.lora_manager", lmm)
+        return srv, p1, p2, p3, lmm
+
+    def test_incompatible_blocked(self):
+        srv, p1, p2, p3, lmm = self._server(
+            {"base_model": "FLUX.1", "trained_words": []})
+        with p1, p2, p3:
+            server = srv.create_mcp_server()
+            content, _ = asyncio.run(server.call_tool("apply_lora", {"name": "thelora"}))
+            assert "Incompatible" in content[0].text
+            lmm.load_lora.assert_not_called()
+
+    def test_default_weight_resolves(self):
+        srv, p1, p2, p3, lmm = self._server(
+            {"base_model": "Pony", "trained_words": ["zzz"], "suggested_weight": None})
+        with p1, p2, p3:
+            server = srv.create_mcp_server()
+            content, _ = asyncio.run(server.call_tool("apply_lora", {"name": "thelora"}))
+            assert "scale 0.7" in content[0].text
+            assert lmm.load_lora.call_args.args[1] == 0.7
+
+    def test_suggested_weight_used(self):
+        srv, p1, p2, p3, lmm = self._server(
+            {"base_model": "Pony", "trained_words": [], "suggested_weight": 0.55})
+        with p1, p2, p3:
+            server = srv.create_mcp_server()
+            content, _ = asyncio.run(server.call_tool("apply_lora", {"name": "thelora"}))
+            assert lmm.load_lora.call_args.args[1] == 0.55

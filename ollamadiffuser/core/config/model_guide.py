@@ -86,13 +86,18 @@ _FAMILIES: Dict[str, Dict[str, Any]] = {
                   "off). Raising guidance breaks these models.",
     },
     "pony": {
-        "good_for": "anime and stylized illustration / character art (Pony, Illustrious, "
-                    "NoobAI — all SDXL-based).",
+        "good_for": "SDXL checkpoints that use the Pony score-tag prompting convention "
+                    "(Pony, Illustrious, NoobAI and their derivatives). Style depends on the "
+                    "specific checkpoint — ranges from anime/illustration to photorealistic "
+                    "(e.g. Pony Realism, CyberRealistic Pony). Do NOT assume anime; follow the "
+                    "loaded checkpoint's own description/trigger words for its target look.",
         "quality": 7,
         "prompt_style": "pony-score",
-        "tags_note": "REQUIRES quality/score tags: prepend 'score_9, score_8_up, score_7_up' "
-                     "(often with 'source_anime', 'rating_safe'). Uses Danbooru-style "
-                     "comma-separated tags, NOT full sentences.",
+        "tags_note": "REQUIRES quality/score tags: prepend 'score_9, score_8_up, score_7_up'. "
+                     "Uses Danbooru-style comma-separated tags, NOT full sentences. For a "
+                     "realism checkpoint add photo tags (e.g. 'photorealistic, realistic, "
+                     "photo') and skip 'source_anime'; for an anime checkpoint use "
+                     "'source_anime'/'rating_safe' etc.",
         # Pony checkpoints arrive via CivitAI and may not carry settings; supply sane defaults.
         "recommended": {"steps": 28, "guidance_scale": 6.0, "size": "1024x1024"},
         "tuning": "steps 25-35; guidance 5-7. Comma-separated Danbooru tags with the score "
@@ -146,6 +151,38 @@ _FAMILIES: Dict[str, Dict[str, Any]] = {
         "recommended": None,  # registry: 8 / 4-5
         "tuning": "steps 6-10; guidance 3.5-5.0 (distilled — don't push far).",
     },
+    "qwen-edit": {
+        "good_for": "instruction-based image editing (Qwen-Image-Edit) — change/add/remove "
+                    "elements while keeping the rest; strong at text.",
+        "quality": 8,
+        "prompt_style": "natural",
+        "tags_note": "Pass the source via input_image and DESCRIBE the change as an "
+                     "instruction ('replace the sky with a sunset'). Not a strength-based "
+                     "refine.",
+        "recommended": None,  # registry: 30 / 4
+        "tuning": "steps 20-40; guidance 3-5. Edit is driven by the instruction prompt.",
+    },
+    "flux-upscaler": {
+        "good_for": "AI photo upscaling / detail enhancement (FLUX.1 Jasper Upscaler "
+                    "ControlNet) — enlarge a low-res image while adding coherent detail.",
+        "quality": 8,
+        "prompt_style": "natural",
+        "tags_note": "Pass the low-res source via control_image and set a LARGER target "
+                     "width/height (~1.5-2x). A short prompt describing the subject helps.",
+        "recommended": None,  # registry: 28 / 3.5
+        "tuning": "steps 20-30; guidance 3-4; target size 1.5-2x the source. "
+                  "controlnet_conditioning_scale ~0.6-1.0.",
+    },
+    "flux-control": {
+        "good_for": "structure-conditioned FLUX generation (Canny edges / Depth) — keep a "
+                    "reference image's composition while restyling.",
+        "quality": 8,
+        "prompt_style": "natural",
+        "tags_note": "Pass the control map (edge/depth image) via control_image; the prompt "
+                     "describes the desired output.",
+        "recommended": None,  # registry: 28 / 10-30 for canny/depth
+        "tuning": "steps 20-30; controlnet_conditioning_scale ~0.5-1.0.",
+    },
 }
 
 # Generic fallback used when a model doesn't resolve to a curated family. Keyed loosely by
@@ -161,6 +198,168 @@ _GENERIC_TUNING = {
     "controlnet_sd15": "steps 25-40; guidance 6-8; needs a control image.",
     "controlnet_sdxl": "steps 25-40; guidance 5-8; needs a control image.",
 }
+
+# --- Realism recipe -------------------------------------------------------------------
+# Prompt/negative tags are the DOMINANT realism lever for SDXL/Pony checkpoints; LoRAs and
+# guidance are secondary. These are the concrete tag sets the guide hands the agent.
+REALISM_POSITIVE_TAGS = ("photo, realistic, RAW photo, film grain, detailed skin, "
+                         "natural lighting")
+ANTI_CARTOON_NEGATIVE = ("cartoon, anime, 3d render, cgi, illustration, painting, "
+                         "plastic skin, smooth skin")
+PONY_SCORE_NEGATIVE = "score_6, score_5, score_4"  # Pony-only: down-weights low-quality tiers
+_REALISM_POS_TOKENS = ("realism", "realistic", "photoreal", "photograph", "photo", "cinematic")
+_ANIME_TOKENS = ("anime", "cartoon", "toon", "manga", "hentai", "waifu", "illustration")
+
+
+def is_realism(model_name: str, params: Optional[Dict[str, Any]] = None) -> bool:
+    """Whether an SDXL/Pony checkpoint is realism-oriented (vs anime/illustration).
+
+    Scans the always-present signals (name, base_model, trained_words, description, tags).
+    The name is the strongest signal (e.g. 'ponyrealism', 'cyberrealistic'); tags/description
+    are best-effort (absent for locally-imported checkpoints).
+    """
+    p = _norm_params(params)
+    name = (model_name or "").lower()
+    hay = " ".join([
+        name,
+        str(p.get("description") or ""),
+        " ".join(p.get("trained_words") or []),
+        " ".join(p.get("tags") or []),
+    ]).lower()
+    pos = any(t in name for t in _REALISM_POS_TOKENS) or any(t in hay for t in _REALISM_POS_TOKENS)
+    anime = any(t in name for t in _ANIME_TOKENS)
+    # Name signals win ties; otherwise realism only when a positive token is present.
+    if anime and not any(t in name for t in _REALISM_POS_TOKENS):
+        return False
+    return pos
+
+
+# --- Per-model prompting mechanics ----------------------------------------------------
+# Different text encoders reward different prompt construction. Families map to a prompt
+# GROUP; each group carries capability flags + a concrete "how to prompt" recipe. `negatives`
+# is per-family (some distilled models in a natural-language group ignore negatives entirely).
+_PROMPT_GROUPS = {
+    "clip-tags": {
+        "format": "comma-separated tags",
+        "supports_weighting": True,
+        "supports_break": True,
+        "supports_sections": False,
+        "prompting": "Comma-separated tags, most important FIRST (earlier = more weight). "
+                     "Emphasize with (tag:1.2) — keep weights 0.4-1.6 or it burns. Use BREAK "
+                     "to split concepts into separate chunks (e.g. 'subject BREAK background'). "
+                     "Negatives matter a lot here.",
+    },
+    "sd35": {
+        "format": "natural language or tags",
+        "supports_weighting": True,
+        "supports_break": True,
+        "supports_sections": False,
+        "prompting": "Prefer natural descriptive sentences (SD3.5 was trained on them); tags "
+                     "also work. Subject first. Keep negatives SHORT (<10 terms, only issues "
+                     "you actually see) — they refine, they don't fix base quality.",
+    },
+    "flux-natural": {
+        "format": "natural language",
+        "supports_weighting": False,
+        "supports_break": False,
+        "supports_sections": False,
+        "prompting": "Natural-language sentences, NOT tag lists. No (word:1.3) weighting — say "
+                     "'with emphasis on X'. Earlier words weigh more; put the subject first, "
+                     "then action, style, context, lighting.",
+    },
+    "flux2": {
+        "format": "natural language, structured",
+        "supports_weighting": False,
+        "supports_break": False,
+        "supports_sections": True,
+        "prompting": "Natural language, subject -> action -> style -> context -> lighting -> "
+                     "technical. You CAN use labeled sections or even a JSON prompt for precise "
+                     "control, and a 'camera:' block for lens/framing. No negative prompts — "
+                     "describe what you DO want (say 'a photograph', not 'not a cartoon').",
+    },
+    "qwen": {
+        "format": "natural language, structured",
+        "supports_weighting": False,
+        "supports_break": False,
+        "supports_sections": True,
+        "prompting": "Structured labeled lines work great: 'Subject: / Pose: / Clothing: / "
+                     "Camera: / Environment: / Lighting: / Mood:'. Subject first. For readable "
+                     "in-image TEXT, wrap it in double quotes and put each text item on its own "
+                     "line with a position. Short (1-3 sentences) or structured beats long.",
+    },
+    "z-natural": {
+        "format": "long natural-language narrative",
+        "supports_weighting": False,
+        "supports_break": False,
+        "supports_sections": False,
+        "prompting": "Long, coherent natural-language description (30-120 words), NOT tag soup. "
+                     "Layer it: subject/pose/appearance -> environment -> lighting/mood/camera. "
+                     "Guidance is 0, so negatives are IGNORED — phrase every constraint "
+                     "positively.",
+    },
+    "generic-natural": {
+        "format": "natural language",
+        "supports_weighting": False,
+        "supports_break": False,
+        "supports_sections": False,
+        "prompting": "Describe the scene in natural language, subject first. Check the model "
+                     "card for tag vs sentence preference and negative-prompt support.",
+    },
+}
+
+_FAMILY_TO_GROUP = {
+    "pony": "clip-tags", "sdxl-base": "clip-tags", "sdxl-turbo": "clip-tags", "sd15": "clip-tags",
+    "sd35": "sd35", "sd35-turbo": "sd35",
+    "flux-dev": "flux-natural", "flux-schnell": "flux-natural", "flux-kontext": "flux-natural",
+    "chroma": "flux-natural", "flux-upscaler": "flux-natural", "flux-control": "flux-natural",
+    "flux2-klein": "flux2", "flux2-dev": "flux2",
+    "qwen": "qwen", "qwen-edit": "qwen",
+    "z-image-turbo": "z-natural",
+}
+
+# Families whose models ignore negative prompts (guidance-distilled / no-CFG). Overrides the
+# group default. Everything else: clip-tags -> strong, sd35/qwen/flux -> weak.
+_NEGATIVES_IGNORED = {"flux-schnell", "flux2-klein", "flux2-dev", "z-image-turbo",
+                      "sdxl-turbo", "sd35-turbo"}
+_NEGATIVES_STRONG = {"pony", "sdxl-base", "sd15"}
+
+
+def negatives_mode(family: str) -> str:
+    """How much a family's models respond to negative prompts: strong | weak | ignored."""
+    if family in _NEGATIVES_IGNORED:
+        return "ignored"
+    if family in _NEGATIVES_STRONG:
+        return "strong"
+    return "weak"
+
+
+def prompting_info(family: str) -> Dict[str, Any]:
+    """Prompt-construction mechanics + capability flags for a family."""
+    group = _PROMPT_GROUPS[_FAMILY_TO_GROUP.get(family, "generic-natural")]
+    return {
+        "format": group["format"],
+        "supports_weighting": group["supports_weighting"],
+        "supports_break": group["supports_break"],
+        "supports_sections": group["supports_sections"],
+        "negatives": negatives_mode(family),
+        "prompting": group["prompting"],
+    }
+
+
+def realism_recipe(family: str, params: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Concrete realism tag advice for a realism-oriented SDXL/Pony checkpoint, else None."""
+    neg = negatives_mode(family)
+    lines = [f"Positive: add {REALISM_POSITIVE_TAGS}."]
+    if family == "pony":
+        lines.append("Keep 'score_9, score_8_up, score_7_up' first, but drop 'source_anime' "
+                     "(it pushes illustration) — prefer 'source_pony' or no source tag.")
+    if neg == "ignored":
+        lines.append("This model IGNORES negatives — steer away from cartoon by POSITIVE "
+                     "phrasing ('a photorealistic photograph, sharp focus'), not a negative list.")
+    else:
+        neg_terms = ANTI_CARTOON_NEGATIVE + (", " + PONY_SCORE_NEGATIVE if family == "pony" else "")
+        lines.append(f"Negative: {neg_terms}.")
+    return " ".join(lines)
 
 
 def _norm_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -189,6 +388,12 @@ def resolve_family(model_name: str,
         return "flux-schnell"
     if "kontext" in name:
         return "flux-kontext"
+    if "upscal" in name:
+        return "flux-upscaler"
+    if "canny" in name or "depth" in name:
+        return "flux-control"
+    if "qwen" in name and "edit" in name:
+        return "qwen-edit"
     if "qwen" in name:
         return "qwen"
     if "chroma" in name:
@@ -208,6 +413,88 @@ def resolve_family(model_name: str,
     if mt == "sd3" or "3.5" in name:
         return "sd35"
     return "_generic"
+
+
+# How to drive each image-conditioning op from the MCP generate_image tool.
+IMAGE_OP_HELP = {
+    "txt2img": "text-to-image (no input image).",
+    "img2img": "refine/restyle: input_image (or from_last='init') + strength "
+               "(~0.2-0.4 subtle refine, 0.5-0.7 restyle).",
+    "edit": "instruction edit: input_image (or from_last='init') and DESCRIBE the change "
+            "in the prompt; strength is minor.",
+    "upscale": "AI upscale: control_image=<low-res> (or from_last='control') and set a "
+               "LARGER target width/height (~1.5-2x).",
+    "canny": "edge-conditioned: control_image=<canny edge map>.",
+    "depth": "depth-conditioned: control_image=<depth map>.",
+    "control": "structure-conditioned: control_image=<reference/control map>.",
+    "inpaint": "inpaint — not exposed via MCP yet (use CLI/Web UI): needs image + mask.",
+    "redux": "image variation — not exposed via MCP yet (use CLI/Web UI): needs reference image(s).",
+}
+
+# Which ops accept the img2img/edit "init image" slot vs the ControlNet "control image" slot.
+_INIT_OPS = ("img2img", "edit")
+_CONTROL_OPS = ("upscale", "canny", "depth", "control")
+
+
+def image_ops(model_name: str,
+              model_type: Optional[str] = None,
+              params: Optional[Dict[str, Any]] = None) -> list:
+    """Image-conditioning modes a model supports, most-relevant first.
+
+    Decided by the MLX variant/model-name (authoritative for MLX, which is what most local
+    installs use), else by diffusers model_type. Values are keys of IMAGE_OP_HELP.
+    """
+    name = (model_name or "").lower()
+    mt = (model_type or "").lower()
+    p = _norm_params(params)
+    variant = str(p.get("mlx_variant") or "").lower()
+    mlx_name = str(p.get("mlx_model_name") or "").lower()
+
+    if variant:
+        if variant == "flux1-kontext":
+            return ["edit"]
+        if variant == "flux1-fill":
+            return ["inpaint"]
+        if variant == "flux1-redux":
+            return ["redux"]
+        if variant == "flux1-depth":
+            return ["depth"]
+        if variant == "flux1-controlnet":
+            if "upscal" in mlx_name:
+                return ["upscale"]
+            if "canny" in mlx_name:
+                return ["canny"]
+            return ["control"]
+        if variant == "qwen-image":
+            return ["edit"] if "edit" in mlx_name else ["txt2img", "img2img"]
+        # flux1 (dev/schnell), flux2 (klein), z_image → text-to-image + img2img
+        return ["txt2img", "img2img"]
+
+    # Diffusers models (non-MLX).
+    if mt in ("sdxl", "sd15", "sd3", "flux", "generic"):
+        return ["txt2img", "img2img"]
+    if mt in ("controlnet_sd15", "controlnet_sdxl"):
+        return ["control"]
+    # kontext/upscaler/etc. can also arrive as non-mlx names; fall back on name hints.
+    if "kontext" in name or ("qwen" in name and "edit" in name):
+        return ["edit"]
+    if "upscal" in name:
+        return ["upscale"]
+    if "canny" in name:
+        return ["canny"]
+    if "depth" in name:
+        return ["depth"]
+    return ["txt2img"]
+
+
+def accepts_init_image(ops) -> bool:
+    """True if the model takes an img2img/edit source image."""
+    return any(o in ops for o in _INIT_OPS)
+
+
+def accepts_control_image(ops) -> bool:
+    """True if the model takes a ControlNet-style control image (upscale/canny/depth)."""
+    return any(o in ops for o in _CONTROL_OPS)
 
 
 def recommended_settings(model_name: str,
@@ -235,6 +522,11 @@ def guide_for(model_name: str,
     fam = resolve_family(model_name, model_type, params)
     entry = _FAMILIES.get(fam)
     rec = recommended_settings(model_name, model_type, params)
+    ops = image_ops(model_name, model_type, params)
+    prompting = prompting_info(fam)
+    # Realism recipe only for SDXL/Pony-style checkpoints that read as realism-oriented.
+    realism = fam in ("pony", "sdxl-base") and is_realism(model_name, params)
+    recipe = realism_recipe(fam, params) if realism else None
     if entry is None:
         mt = (model_type or "").lower()
         return {
@@ -248,6 +540,10 @@ def guide_for(model_name: str,
                       "Start from the recommended settings; adjust steps +/-30% and "
                       "guidance +/-1-2 if results are poor."),
             "recommended": rec,
+            "image_ops": ops,
+            "prompting": prompting,
+            "realism": False,
+            "recipe": None,
         }
     return {
         "family": fam,
@@ -257,6 +553,10 @@ def guide_for(model_name: str,
         "tags_note": entry["tags_note"],
         "tuning": entry["tuning"],
         "recommended": rec,
+        "image_ops": ops,
+        "prompting": prompting,
+        "realism": realism,
+        "recipe": recipe,
     }
 
 
@@ -277,13 +577,28 @@ def format_full(model_name: str,
                 params: Optional[Dict[str, Any]] = None) -> str:
     """Human-readable detailed guide for one model (used by the tool and the gate error)."""
     g = guide_for(model_name, model_type, params)
+    ops = g["image_ops"]
+    op_lines = [f"    - {op}: {IMAGE_OP_HELP.get(op, op)}" for op in ops]
+    pr = g["prompting"]
+    caps = []
+    caps.append("weighting (word:1.3)" if pr["supports_weighting"] else "no weighting")
+    caps.append("BREAK" if pr["supports_break"] else "no BREAK")
+    caps.append("labeled sections/JSON" if pr["supports_sections"] else "no sections")
+    caps.append(f"negatives: {pr['negatives']}")
     lines = [
         f"{model_name}  [{g['family']}]",
         f"  Quality: {g['quality']}/10",
         f"  Good for: {g['good_for']}",
         f"  Prompt style: {g['prompt_style']} — {g['tags_note']}",
+        f"  Prompting ({pr['format']}; {', '.join(caps)}): {pr['prompting']}",
+    ]
+    if g.get("recipe"):
+        lines.append(f"  Realism recipe: {g['recipe']}")
+    lines += [
         f"  Recommended settings: {_fmt_settings(g['recommended'])}",
         f"  Tuning room: {g['tuning']}",
+        f"  Image ops: {', '.join(ops)}",
+        *op_lines,
     ]
     return "\n".join(lines)
 
@@ -294,4 +609,4 @@ def catalog_line(model_name: str,
     """One-line summary for the browse-all catalog."""
     g = guide_for(model_name, model_type, params)
     return (f"  - {model_name} [{g['family']}] q{g['quality']}/10, "
-            f"{g['prompt_style']} prompts — {g['good_for']}")
+            f"{g['prompt_style']} prompts, ops:{'/'.join(g['image_ops'])} — {g['good_for']}")
