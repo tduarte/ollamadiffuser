@@ -235,7 +235,10 @@ def create_mcp_server():
             "`strength` (lower = less source bleed / more restyle). This is NOT img2img (which "
             "drifts from the whole image) — ControlNet holds structure explicitly. Heads-up: canny "
             "is only a ~3GB adapter and needs the FLUX.1-dev base (~20GB) installed; depth is a "
-            "self-contained model.\n"
+            "self-contained model. Match width/height to the SOURCE's aspect ratio (a square "
+            "1024x1024 on a non-square source distorts it). And do NOT pass `strength` to the "
+            "depth model — it generates fresh from the depth map; a strength value turns the "
+            "output into noise.\n"
             "REALISM & ORDER OF OPERATIONS: the PROMPT and NEGATIVE tags are the DOMINANT quality "
             "lever — LoRAs and guidance are secondary polish. For a realism-tuned Pony/SDXL "
             "checkpoint that still looks cartoonish, first fix the PROMPT (add photo/realistic "
@@ -363,8 +366,11 @@ def create_mcp_server():
             prompt: Text description of the desired image
             model: Model to use (auto-loads if needed). Leave empty to use current model.
             negative_prompt: What to avoid in the image
-            width: Image width in pixels
-            height: Image height in pixels
+            width: Image width in pixels. For img2img / edit / ControlNet, MATCH the
+                source image's aspect ratio (the source is resized to width x height,
+                so a square 1024x1024 on a portrait/landscape source distorts it).
+            height: Image height in pixels. See width — keep the source's aspect ratio
+                for image-conditioned passes.
             steps: Number of inference steps (model-specific default if omitted)
             guidance_scale: Guidance scale (model-specific default if omitted)
             seed: Random seed for reproducibility. Change it to reroll an image
@@ -581,10 +587,12 @@ def create_mcp_server():
                 gen_kwargs[spec["source_kwarg"]] = ctrl_img
                 if spec["strength_kwarg"]:
                     gen_kwargs[spec["strength_kwarg"]] = controlnet_conditioning_scale
-                # Depth routes the source to `image` — expose `strength` as its blend
-                # (lower = less source bleed / more restyle freedom).
+                # Depth routes the source to `image`, but mflux's depth model ALWAYS starts
+                # from full noise and uses the image only for the depth map — it never does
+                # img2img. A positive image_strength there truncates the denoise schedule on
+                # pure noise and yields static, so force it off (full schedule).
                 if spec["source_kwarg"] == "image":
-                    gen_kwargs["strength"] = strength
+                    gen_kwargs["strength"] = None
             else:
                 gen_kwargs["control_image"] = ctrl_img
                 gen_kwargs["controlnet_conditioning_scale"] = controlnet_conditioning_scale

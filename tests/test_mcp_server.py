@@ -601,13 +601,16 @@ class TestControlNetRouting:
         assert kw.get("controlnet_strength") == 0.7   # bridged to mflux's name
         assert "image" not in kw
 
-    def test_depth_routes_to_image(self):
+    def test_depth_routes_to_image_without_strength(self):
+        # Depth uses the source only for the depth map (mflux always starts from full
+        # noise); a positive image_strength corrupts it, so strength must be forced off
+        # even when the caller passes one.
         kw = self._run(
             "flux.1-depth-dev-mlx",
             _control_settings("flux.1-depth-dev-mlx", "flux1-depth", "dev", 10.0),
             {"prompt": "cyberpunk", "control_image": "src.png", "strength": 0.3})
         assert kw.get("image") is not None      # depth wants the source on `image`
-        assert kw.get("strength") == 0.3
+        assert kw.get("strength") is None       # NOT 0.3 — img2img is off for depth
         assert "control_image" not in kw
 
 

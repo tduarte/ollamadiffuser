@@ -200,12 +200,14 @@ _FAMILIES: Dict[str, Dict[str, Any]] = {
         "prompt_style": "natural",
         "tags_note": "Pass the SOURCE photo via control_image (or from_last='control'); the "
                      "prompt = TARGET STYLE. On MLX the depth map is computed for you — pass a "
-                     "normal image. Natural language, no negatives. This is a self-contained full "
-                     "model (no separate base needed).",
+                     "normal image. Natural language, no negatives. Self-contained full model "
+                     "(no separate base). Do NOT set `strength` — depth generates a FRESH image "
+                     "from the depth map (there is no source-pixel blend), and a strength value "
+                     "corrupts it into noise. Keep the source's aspect ratio in width/height.",
         "recommended": None,  # registry: 28 steps, guidance 10
-        "tuning": "steps 20-30; guidance ~10 (registry default). Use `strength` for how much the "
-                  "SOURCE bleeds through: LOWER (~0.2-0.4) = more fully re-rendered in the new "
-                  "style, HIGHER keeps more of the original look.",
+        "tuning": "steps 20-30; guidance ~10 (registry default). The layout is locked by the "
+                  "depth map — steer the LOOK entirely through the prompt (style, materials, "
+                  "lighting). No source-bleed / strength knob here.",
     },
 }
 
