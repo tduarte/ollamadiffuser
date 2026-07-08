@@ -46,6 +46,26 @@ def _merge_negatives(negative_prompt: str, add_anatomy: bool) -> str:
     return _append_negatives(negative_prompt, _ANATOMY_NEGATIVE)
 
 
+def _load_image_path(path: str, arg_name: str) -> "PILImage.Image":
+    """Open a caller-supplied image path for img2img/control, with a helpful error.
+
+    generate_image returns its result inline (a base64 image block), never a file
+    on disk — so there is no output path to feed back in. Agents chaining a previous
+    result sometimes fabricate one here; steer them to from_last instead of letting
+    a bare FileNotFoundError surface.
+    """
+    if not os.path.isfile(path):
+        raise ValueError(
+            f"{arg_name}={path!r} is not a readable file. Note: generate_image "
+            f"returns the image inline, not as a file path — there is no saved "
+            f"output to reference. To reuse the PREVIOUS generation, pass "
+            f"from_last='init' (img2img/edit) or from_last='control' (upscale) "
+            f"instead of a path. Use {arg_name} only for a real image file the "
+            f"user provided."
+        )
+    return PILImage.open(path).convert("RGB")
+
+
 def _model_trigger_words(model_name: Optional[str]):
     """Trigger words to auto-inject: the loaded model's plus any loaded LoRA's."""
     words = []
@@ -273,6 +293,12 @@ def create_mcp_server():
     ) -> Image:
         """Generate an image from a local diffusion model; returns the finished image.
 
+        The result is returned INLINE as an image block, not written to disk — there
+        is no output file path. To feed a generated image into a later img2img/edit/
+        upscale pass, use from_last='init'/'control' (NOT input_image with an invented
+        path). input_image/control_image are only for a real image file on disk.
+
+
         Generation is slow. For a user-driven run, only call this AFTER you have
         summarized what you will generate (final enriched prompt + negative prompt,
         model, any LoRA/embedding/VAE + scale, and key params) and the user has
@@ -383,11 +409,11 @@ def create_mcp_server():
                     "Generate one first, or pass input_image/control_image as a path."
                 )
             if input_image:
-                init_img = PILImage.open(input_image).convert("RGB")
+                init_img = _load_image_path(input_image, "input_image")
             elif from_last == "init":
                 init_img = _last_image.get("image")
             if control_image:
-                ctrl_img = PILImage.open(control_image).convert("RGB")
+                ctrl_img = _load_image_path(control_image, "control_image")
             elif from_last == "control":
                 ctrl_img = _last_image.get("image")
 
