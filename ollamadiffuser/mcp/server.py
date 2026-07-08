@@ -9,6 +9,8 @@ from typing import Optional
 
 from ..core.models.manager import model_manager
 from ..core.config.settings import settings
+from ..core.config.model_registry import model_registry
+from ..core.config import model_guide as _model_guide
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,16 @@ def _model_trigger_words(model_name: Optional[str]):
     return out
 
 
+def _model_type_and_params(model_name: str):
+    """Resolve (model_type, parameters) for a model from its installed config or the
+    static registry — the inputs the model_guide helpers need."""
+    cfg = settings.models.get(model_name)
+    reg = model_registry.get_model(model_name)
+    model_type = (cfg.model_type if cfg else None) or (reg or {}).get("model_type")
+    params = (cfg.parameters if cfg else None) or (reg or {}).get("parameters") or {}
+    return model_type, params
+
+
 def _ensure_mcp():
     """Check that the mcp package is available."""
     try:
@@ -84,6 +96,11 @@ def create_mcp_server():
             "IMPORTANT: discover models and LoRAs through THESE TOOLS — do not search the "
             "filesystem. Models and LoRAs are registered with ollamadiffuser (in "
             "~/.ollamadiffuser), not just files on disk, and each carries metadata you need:\n"
+            "  - model_guide(name?): what each base model is good for, a quality score, whether "
+            "it needs Danbooru or Pony 'score_' tags, its recommended settings, and how far you "
+            "can tune them. CALL model_guide('<model>') BEFORE generating with a model — "
+            "generate_image REFUSES models you have not consulted, and the first generation must "
+            "use the recommended settings it gives.\n"
             "  - list_models / get_model_details(name): installed models, their type, base model, "
             "trigger words, description.\n"
             "  - list_loras(base_model?) or find_loras(query): installed LoRAs with base model and "
@@ -94,10 +111,13 @@ def create_mcp_server():
             "  - search_huggingface / install_hf_lora: fetch new LoRAs from Hugging Face (another "
             "source). HF LoRA repos can hold several .safetensors files — search with "
             "show_files=True (or get the list from the result) and pass weight_name.\n"
-            "Typical flow: load_model -> (optional) apply_lora / load_embedding / attach_vae -> "
-            "generate_image. generate_image auto-injects the loaded model's and LoRA's trigger "
-            "words. For Pony-based SDXL checkpoints, also prepend 'score_9, score_8_up, score_7_up' "
-            "to the prompt for good quality.\n"
+            "Typical flow: model_guide(<model>) -> load_model -> (optional) apply_lora / "
+            "load_embedding / attach_vae -> generate_image. generate_image auto-injects the "
+            "loaded model's and LoRA's trigger words. Each model's prompt/tag style and settings "
+            "come from model_guide — e.g. Pony/Illustrious SDXL checkpoints need "
+            "'score_9, score_8_up, score_7_up' and Danbooru tags, while FLUX/Klein want plain "
+            "natural language; model_guide tells you which. The ANATOMY REVIEW tuning suggestions "
+            "below are subordinate to the per-model tuning ranges model_guide returns.\n"
             "PROMPT QUALITY: before generating, if the user's prompt is short or vague (e.g. "
             "'a cat', 'a warrior'), first ENRICH it into a detailed prompt — a well-specified "
             "prompt improves results more than any parameter. Preserve the user's intent and any "
@@ -111,9 +131,23 @@ def create_mcp_server():
             "painting, 3D render, anime, or a specific artist/era); (8) for photoreal, camera/lens "
             "(focal length, depth of field, film grain, aspect ratio); (9) mood/atmosphere; (10) "
             "detail/quality tags ('highly detailed', 'sharp focus', '8k') — these help some models "
-            "more than others. Keep model/LoRA trigger words at the front. Briefly tell the user "
-            "the enhanced prompt you used. If the user gave an already-detailed prompt or asked for "
-            "exact wording, use it verbatim.\n"
+            "more than others. Keep model/LoRA trigger words at the front. Surface the enhanced "
+            "prompt to the user as part of the pre-generation confirmation summary (see CONFIRM "
+            "BEFORE GENERATING). If the user gave an already-detailed prompt or asked for exact "
+            "wording, use it verbatim.\n"
+            "CONFIRM BEFORE GENERATING: image generation is slow, so do NOT call generate_image "
+            "for a user-driven run until you have shown the user a summary of exactly what you "
+            "will run and they have approved it. The summary must include: the final (enriched) "
+            "prompt and the negative prompt; the model; any LoRA/embedding/VAE and its scale; and "
+            "the key parameters (steps, guidance_scale, width x height, seed). Then ask the user "
+            "to proceed, and only call generate_image once they confirm. This gate covers "
+            "user-driven generations — a new request, or a change the user asks for (different "
+            "prompt, model, LoRA, or params). It does NOT cover your OWN automatic anatomy-fix "
+            "iteration (see ANATOMY REVIEW) — the seed changes, LoRA application, and "
+            "guidance/step tweaks you make to fix a bad image proceed WITHOUT re-asking; just "
+            "briefly note what you changed. Exception: if the user explicitly told you to "
+            "generate without confirming (e.g. 'just generate', 'don't ask'), proceed and still "
+            "briefly state what you ran.\n"
             "ANATOMY REVIEW: after each generate_image, LOOK AT the returned image and check "
             "hands/fingers (count + shape), limbs, eyes and faces — these are where diffusion "
             "models fail most. If you see extra/fused fingers, malformed hands, extra limbs or "
@@ -124,6 +158,15 @@ def create_mcp_server():
             "then return the best result and note any remaining issue."
         ),
     )
+
+    # Server-lifetime enforcement state (see the model_guide gate in generate_image):
+    #   _briefed   — models whose model_guide(<name>) the agent has consulted.
+    #   _generated — models that have completed at least one generation this session.
+    # These are quantized local models that degrade badly with wrong settings, so the
+    # gate REQUIRES the guide before generating and forces recommended settings on the
+    # first generation. State resets on server restart; the agent simply re-briefs.
+    _briefed: set = set()
+    _generated: set = set()
 
     @mcp_server.tool()
     async def generate_image(
@@ -140,6 +183,12 @@ def create_mcp_server():
         ctx: Context = None,
     ) -> Image:
         """Generate an image from a local diffusion model; returns the finished image.
+
+        Generation is slow. For a user-driven run, only call this AFTER you have
+        summarized what you will generate (final enriched prompt + negative prompt,
+        model, any LoRA/embedding/VAE + scale, and key params) and the user has
+        confirmed — see the CONFIRM BEFORE GENERATING guidance in the server
+        instructions. Your own automatic anatomy-fix rerolls do not need confirmation.
 
         This call blocks until the image is fully rendered. Progress steps count
         the denoising loop and are followed by a "Decoding image…" (VAE) phase
@@ -183,6 +232,44 @@ def create_mcp_server():
         # Otherwise generate_image(model='x') after a respawn wrongly skips the
         # load and then fails with "No model loaded".
         want = model or model_manager.get_current_model()
+
+        # --- model_guide gate -------------------------------------------------
+        # Quantized local models need the right settings. Require the agent to
+        # consult model_guide(<model>) before generating, and force the model's
+        # recommended settings on the FIRST generation. Later generations are
+        # free (the anatomy-fix reroll loop tunes seed/guidance/steps itself).
+        if want:
+            _mt, _params = _model_type_and_params(want)
+            _rec = _model_guide.recommended_settings(want, _mt, _params)
+            if want not in _briefed:
+                raise ValueError(
+                    f"Blocked: call model_guide('{want}') before generating with it — "
+                    f"these are quantized local models that need specific settings.\n\n"
+                    f"{_model_guide.format_full(want, _mt, _params)}\n\n"
+                    f"Then retry generate_image using the recommended settings above."
+                )
+            if want not in _generated:
+                _rs, _rg = _rec.get("steps"), _rec.get("guidance_scale")
+                if _rs is not None:
+                    if steps is None:
+                        steps = _rs
+                    elif steps != _rs:
+                        raise ValueError(
+                            f"First generation with '{want}' must use the recommended "
+                            f"steps={_rs} (you passed steps={steps}). Recommended: "
+                            f"steps={_rs}, guidance_scale={_rg}. Tune on a later attempt."
+                        )
+                if _rg is not None:
+                    if guidance_scale is None:
+                        guidance_scale = _rg
+                    elif abs(float(guidance_scale) - float(_rg)) > 1e-6:
+                        raise ValueError(
+                            f"First generation with '{want}' must use the recommended "
+                            f"guidance_scale={_rg} (you passed guidance_scale={guidance_scale}). "
+                            f"Recommended: steps={_rs}, guidance_scale={_rg}. "
+                            f"Tune on a later attempt."
+                        )
+
         need_load = bool(want) and (
             not model_manager.is_model_loaded()
             or model_manager.get_current_model() != want
@@ -247,9 +334,52 @@ def create_mcp_server():
             progress_callback=progress_callback,
         )
 
+        # First generation for this model succeeded — subsequent calls may tune freely.
+        if want:
+            _generated.add(want)
+
         buf = io.BytesIO()
         result.save(buf, format="PNG")
         return Image(data=buf.getvalue(), format="png")
+
+    @mcp_server.tool()
+    async def model_guide(model_name: Optional[str] = None) -> str:
+        """Guidance for choosing and driving a base model. CALL THIS FIRST.
+
+        These are quantized local models that behave very differently — some want
+        plain natural-language prompts, others need Danbooru/Pony 'score_' tags;
+        some are distilled to 4-8 steps at guidance ~1, others want 30 steps at
+        guidance ~7. generate_image REQUIRES that you call model_guide(<model>)
+        for the model you intend to use before it will generate, and it forces the
+        model's recommended settings on the first generation.
+
+        Args:
+            model_name: Omit to browse a catalog of all available base models
+                (family, quality, prompt style, what each is good for). Pass a
+                specific model name to get its full guide — what it's good for, a
+                quality score, whether it needs Danbooru/score tags, the
+                recommended settings, and how far you can tune them. Calling it
+                with a name marks that model as briefed so generate_image accepts it.
+        """
+        if model_name:
+            if not (settings.models.get(model_name) or model_registry.get_model(model_name)):
+                return (f"Model '{model_name}' is unknown. Call model_guide() with no "
+                        f"argument to see the available base models.")
+            mt, params = _model_type_and_params(model_name)
+            _briefed.add(model_name)
+            return (_model_guide.format_full(model_name, mt, params) +
+                    "\n\nUse these recommended settings for the FIRST generation; "
+                    "tune within the room above only on later attempts.")
+
+        # No arg: catalog of available + installed base models.
+        available = model_registry.get_available_models()      # name -> registry dict
+        installed = settings.models                            # name -> ModelConfig
+        names = sorted(set(available) | set(installed))
+        lines = ["Available base models — call model_guide('<name>') before using one:"]
+        for name in names:
+            mt, params = _model_type_and_params(name)
+            lines.append(_model_guide.catalog_line(name, mt, params))
+        return "\n".join(lines)
 
     @mcp_server.tool()
     async def list_models() -> str:

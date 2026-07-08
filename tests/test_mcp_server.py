@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image as PILImage
 
 
 def _mcp_available():
@@ -84,11 +85,12 @@ class TestMCPServerCreation:
                 "apply_lora",
                 "load_embedding",
                 "attach_vae",
+                "model_guide",
             ):
                 assert expected in tools
             # install_hf_model was removed: base-model checkpoints are CLI-only.
             assert "install_hf_model" not in tools
-            assert len(tools) == 14
+            assert len(tools) == 15
 
 
 @MCP_SKIP
@@ -198,3 +200,128 @@ class TestGenerateImageTool:
                 asyncio.run(
                     server.call_tool("generate_image", {"prompt": "test"})
                 )
+
+
+def _gen_manager(model):
+    """A model_manager mock that reports `model` loaded and returns a real PIL image
+    from generate_image, so the generate_image tool runs end-to-end."""
+    mm = MagicMock()
+    mm.get_current_model.return_value = model
+    mm.is_model_loaded.return_value = True
+    mm.is_model_installed.return_value = True
+    mm.loaded_model.generate_image.return_value = PILImage.new("RGB", (8, 8), "blue")
+    return mm
+
+
+class TestModelGuideResolver:
+    """model_guide has no MCP dependency — resolver/settings tests run unconditionally."""
+
+    def test_family_and_recommended(self):
+        from ollamadiffuser.core.config import model_guide as mg
+
+        # Klein: registry says 28/3.5 but the curated guide overrides to 8/1.0.
+        assert mg.resolve_family("flux.2-klein-9b-mlx", "mlx", {}) == "flux2-klein"
+        rec = mg.recommended_settings(
+            "flux.2-klein-9b-mlx", "mlx",
+            {"num_inference_steps": 28, "guidance_scale": 3.5})
+        assert rec["steps"] == 8
+        assert rec["guidance_scale"] == 1.0
+
+        # Pony detected via CivitAI base_model even though model_type is sdxl.
+        assert mg.resolve_family("SomeMix", "sdxl", {"base_model": "Pony"}) == "pony"
+        assert mg.guide_for("SomeMix", "sdxl", {"base_model": "Pony"})["prompt_style"] \
+            == "pony-score"
+
+        # Falls back to registry params when the family has no curated recommendation.
+        rec2 = mg.recommended_settings(
+            "stable-diffusion-1.5", "sd15",
+            {"num_inference_steps": 50, "guidance_scale": 7.5})
+        assert rec2["steps"] == 50 and rec2["guidance_scale"] == 7.5
+
+
+@MCP_SKIP
+class TestModelGuideTool:
+    def test_catalog_lists_available(self, mock_model_manager):
+        with patch("ollamadiffuser.mcp.server.model_manager", mock_model_manager):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            content, _ = asyncio.run(server.call_tool("model_guide", {}))
+            text = content[0].text
+            assert "model_guide('<name>')" in text
+            assert "flux.1-schnell" in text  # a known registry model
+
+    def test_named_guide_returns_recommended(self, mock_model_manager):
+        with patch("ollamadiffuser.mcp.server.model_manager", mock_model_manager):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            content, _ = asyncio.run(
+                server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            text = content[0].text
+            assert "Recommended settings" in text
+            assert "flux-schnell" in text
+
+
+@MCP_SKIP
+class TestGenerateGuideGate:
+    def test_unbriefed_generate_blocked(self):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            with pytest.raises(ToolError) as ei:
+                asyncio.run(server.call_tool(
+                    "generate_image", {"prompt": "x", "model": "flux.1-schnell"}))
+            msg = str(ei.value)
+            assert "model_guide" in msg
+            assert "steps=4" in msg  # recommended settings inlined in the block error
+            mm.loaded_model.generate_image.assert_not_called()
+
+    def test_first_gen_fills_recommended(self):
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            asyncio.run(server.call_tool(
+                "generate_image", {"prompt": "a cat", "model": "flux.1-schnell"}))
+            kw = mm.loaded_model.generate_image.call_args.kwargs
+            assert kw["num_inference_steps"] == 4
+            assert kw["guidance_scale"] == 1.0
+
+    def test_first_gen_rejects_off_recommended(self):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            with pytest.raises(ToolError, match="must use the recommended"):
+                asyncio.run(server.call_tool(
+                    "generate_image",
+                    {"prompt": "x", "model": "flux.1-schnell", "steps": 30}))
+            mm.loaded_model.generate_image.assert_not_called()
+
+    def test_second_gen_allows_tuning(self):
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            asyncio.run(server.call_tool(
+                "generate_image", {"prompt": "x", "model": "flux.1-schnell"}))  # first
+            asyncio.run(server.call_tool(
+                "generate_image",
+                {"prompt": "x", "model": "flux.1-schnell",
+                 "steps": 8, "guidance_scale": 2.0}))  # tune freely
+            kw = mm.loaded_model.generate_image.call_args.kwargs
+            assert kw["num_inference_steps"] == 8
+            assert kw["guidance_scale"] == 2.0
