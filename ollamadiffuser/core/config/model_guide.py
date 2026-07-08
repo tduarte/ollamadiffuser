@@ -173,15 +173,39 @@ _FAMILIES: Dict[str, Dict[str, Any]] = {
         "tuning": "steps 20-30; guidance 3-4; target size 1.5-2x the source. "
                   "controlnet_conditioning_scale ~0.6-1.0.",
     },
-    "flux-control": {
-        "good_for": "structure-conditioned FLUX generation (Canny edges / Depth) — keep a "
-                    "reference image's composition while restyling.",
+    "flux-canny": {
+        "good_for": "structure-preserving restyle via EDGE control (Canny). PICK CANNY when "
+                    "outlines/linework must stay EXACT — architecture, product shots, logos, "
+                    "text/signage, comics/line art, or any case where silhouettes must not "
+                    "drift. Tighter lock than depth, so LESS freedom for dramatic style changes.",
         "quality": 8,
         "prompt_style": "natural",
-        "tags_note": "Pass the control map (edge/depth image) via control_image; the prompt "
-                     "describes the desired output.",
-        "recommended": None,  # registry: 28 / 10-30 for canny/depth
-        "tuning": "steps 20-30; controlnet_conditioning_scale ~0.5-1.0.",
+        "tags_note": "Pass the SOURCE photo via control_image (or from_last='control'); the "
+                     "prompt = TARGET STYLE. On MLX the edge map is extracted for you — pass a "
+                     "normal image, not a pre-made map. Natural language, no negatives. "
+                     "NOTE: this model is only the ~3GB ControlNet adapter — it also needs the "
+                     "FLUX.1-dev base (~20GB) present; first load is heavy.",
+        "recommended": None,  # registry: 28 steps, guidance 3.5
+        "tuning": "steps 20-30. controlnet_conditioning_scale ~0.5-0.9: HIGHER hugs the edges "
+                  "tighter (safer structure, less restyle), LOWER frees the style. If the result "
+                  "ignores your style, lower it; if it loses the composition, raise it.",
+    },
+    "flux-depth": {
+        "good_for": "structure-preserving restyle via DEPTH control. PICK DEPTH for BIGGER style "
+                    "changes — photo->painting, day->night, real->3D/anime — where you want to "
+                    "keep the 3D LAYOUT and spatial arrangement but are happy to change materials, "
+                    "textures, lighting and fine detail. Looser than canny; the go-to for most "
+                    "'change the whole style, keep the scene' restyles.",
+        "quality": 8,
+        "prompt_style": "natural",
+        "tags_note": "Pass the SOURCE photo via control_image (or from_last='control'); the "
+                     "prompt = TARGET STYLE. On MLX the depth map is computed for you — pass a "
+                     "normal image. Natural language, no negatives. This is a self-contained full "
+                     "model (no separate base needed).",
+        "recommended": None,  # registry: 28 steps, guidance 10
+        "tuning": "steps 20-30; guidance ~10 (registry default). Use `strength` for how much the "
+                  "SOURCE bleeds through: LOWER (~0.2-0.4) = more fully re-rendered in the new "
+                  "style, HIGHER keeps more of the original look.",
     },
 }
 
@@ -311,7 +335,8 @@ _FAMILY_TO_GROUP = {
     "pony": "clip-tags", "sdxl-base": "clip-tags", "sdxl-turbo": "clip-tags", "sd15": "clip-tags",
     "sd35": "sd35", "sd35-turbo": "sd35",
     "flux-dev": "flux-natural", "flux-schnell": "flux-natural", "flux-kontext": "flux-natural",
-    "chroma": "flux-natural", "flux-upscaler": "flux-natural", "flux-control": "flux-natural",
+    "chroma": "flux-natural", "flux-upscaler": "flux-natural",
+    "flux-canny": "flux-natural", "flux-depth": "flux-natural",
     "flux2-klein": "flux2", "flux2-dev": "flux2",
     "qwen": "qwen", "qwen-edit": "qwen",
     "z-image-turbo": "z-natural",
@@ -390,8 +415,10 @@ def resolve_family(model_name: str,
         return "flux-kontext"
     if "upscal" in name:
         return "flux-upscaler"
-    if "canny" in name or "depth" in name:
-        return "flux-control"
+    if "canny" in name:
+        return "flux-canny"
+    if "depth" in name:
+        return "flux-depth"
     if "qwen" in name and "edit" in name:
         return "qwen-edit"
     if "qwen" in name:
@@ -495,6 +522,33 @@ def accepts_init_image(ops) -> bool:
 def accepts_control_image(ops) -> bool:
     """True if the model takes a ControlNet-style control image (upscale/canny/depth)."""
     return any(o in ops for o in _CONTROL_OPS)
+
+
+def control_spec(model_name: str,
+                 model_type: Optional[str] = None,
+                 params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Routing for a control/ControlNet model, or None if the model isn't one.
+
+    Different FLUX control models take the source image on a DIFFERENT engine kwarg and use a
+    DIFFERENT strength kwarg:
+      - depth (mflux flux1-depth): source -> ``image`` (depth is computed internally); no
+        controlnet strength (guidance carries it).
+      - canny / upscaler (mflux flux1-controlnet): source -> ``control_image``; strength ->
+        ``controlnet_strength`` (mflux's name; canny extracts edges internally).
+      - non-MLX / SD ControlNet: source -> ``control_image``; strength ->
+        ``controlnet_conditioning_scale`` (unchanged, so the existing SD path is untouched).
+    Returns ``{kind, source_kwarg, strength_kwarg}`` (strength_kwarg may be None).
+    """
+    ops = image_ops(model_name, model_type, params)
+    if not (accepts_control_image(ops) or "depth" in ops):
+        return None
+    mt = (model_type or "").lower()
+    variant = str(_norm_params(params).get("mlx_variant") or "").lower()
+    if variant == "flux1-depth" or ("depth" in ops and mt == "mlx"):
+        return {"kind": "depth", "source_kwarg": "image", "strength_kwarg": None}
+    kind = next((o for o in ("canny", "upscale", "depth", "control") if o in ops), "control")
+    strength_kwarg = "controlnet_strength" if mt == "mlx" else "controlnet_conditioning_scale"
+    return {"kind": kind, "source_kwarg": "control_image", "strength_kwarg": strength_kwarg}
 
 
 def recommended_settings(model_name: str,

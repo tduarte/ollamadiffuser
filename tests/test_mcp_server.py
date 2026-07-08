@@ -86,11 +86,12 @@ class TestMCPServerCreation:
                 "load_embedding",
                 "attach_vae",
                 "model_guide",
+                "recommend_model",
             ):
                 assert expected in tools
             # install_hf_model was removed: base-model checkpoints are CLI-only.
             assert "install_hf_model" not in tools
-            assert len(tools) == 15
+            assert len(tools) == 16
 
 
 @MCP_SKIP
@@ -293,6 +294,20 @@ class TestModelGuideResolver:
         assert parse_suggested_weight("a great detail lora") is None
         assert parse_suggested_weight("trained for 30 steps") is None
 
+    def test_control_spec(self):
+        from ollamadiffuser.core.config import model_guide as mg
+
+        canny = mg.control_spec("flux.1-controlnet-canny-mlx", "mlx",
+                                {"mlx_variant": "flux1-controlnet", "mlx_model_name": "canny"})
+        assert canny == {"kind": "canny", "source_kwarg": "control_image",
+                         "strength_kwarg": "controlnet_strength"}
+        depth = mg.control_spec("flux.1-depth-dev-mlx", "mlx",
+                                {"mlx_variant": "flux1-depth", "mlx_model_name": "dev"})
+        assert depth == {"kind": "depth", "source_kwarg": "image", "strength_kwarg": None}
+        # A non-control model returns None.
+        assert mg.control_spec("flux.2-klein-9b-mlx", "mlx",
+                               {"mlx_variant": "flux2", "mlx_model_name": "klein-9b"}) is None
+
 
 @MCP_SKIP
 class TestModelGuideTool:
@@ -383,6 +398,32 @@ class TestGenerateGuideGate:
 
 
 @MCP_SKIP
+class TestOutputSaving:
+    def test_generation_saved_and_path_returned(self):
+        import os
+        mm = _gen_manager("flux.1-schnell")
+        with patch("ollamadiffuser.mcp.server.model_manager", mm):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
+            res = asyncio.run(server.call_tool(
+                "generate_image", {"prompt": "a cat", "model": "flux.1-schnell"}))
+            # Flatten the returned content blocks and collect any text.
+            def _texts(r):
+                out = []
+                for it in (r if isinstance(r, (list, tuple)) else [r]):
+                    for x in (it if isinstance(it, (list, tuple)) else [it]):
+                        if hasattr(x, "text"):
+                            out.append(x.text)
+                return out
+            texts = [t for t in _texts(res) if "Saved to:" in t]
+            assert texts, f"no saved-path text in result: {res!r}"
+            saved = texts[0].split("Saved to: ")[1].splitlines()[0]
+            assert os.path.isfile(saved)
+
+
+@MCP_SKIP
 class TestImageConditioning:
     def test_img2img_from_last(self):
         mm = _gen_manager("flux.1-schnell")
@@ -410,7 +451,7 @@ class TestImageConditioning:
             server = create_mcp_server()
             asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
             img = PILImage.new("RGB", (16, 16), "green")
-            with patch("ollamadiffuser.mcp.server.PILImage.open", return_value=img):
+            with patch("ollamadiffuser.mcp.server._load_image_path", return_value=img):
                 asyncio.run(server.call_tool(
                     "generate_image",
                     {"prompt": "x", "model": "flux.1-schnell",
@@ -429,7 +470,7 @@ class TestImageConditioning:
             server = create_mcp_server()
             asyncio.run(server.call_tool("model_guide", {"model_name": "flux.1-schnell"}))
             img = PILImage.new("RGB", (16, 16), "green")
-            with patch("ollamadiffuser.mcp.server.PILImage.open", return_value=img):
+            with patch("ollamadiffuser.mcp.server._load_image_path", return_value=img):
                 with pytest.raises(ToolError, match="does not take a control_image"):
                     asyncio.run(server.call_tool(
                         "generate_image",
@@ -526,3 +567,72 @@ class TestApplyLora:
             server = srv.create_mcp_server()
             content, _ = asyncio.run(server.call_tool("apply_lora", {"name": "thelora"}))
             assert lmm.load_lora.call_args.args[1] == 0.55
+
+
+def _control_settings(name, variant, mlx_name, guidance):
+    from ollamadiffuser.core.config.settings import ModelConfig
+    return {name: ModelConfig(
+        name=name, path="/x", model_type="mlx",
+        parameters={"mlx_variant": variant, "mlx_model_name": mlx_name,
+                    "num_inference_steps": 28, "guidance_scale": guidance})}
+
+
+@MCP_SKIP
+class TestControlNetRouting:
+    def _run(self, model, settings_models, args):
+        import ollamadiffuser.mcp.server as srv
+        mm = _gen_manager(model)
+        img = PILImage.new("RGB", (16, 16), "green")
+        with patch.object(srv, "model_manager", mm), \
+                patch.object(srv.settings, "models", settings_models), \
+                patch("ollamadiffuser.mcp.server._load_image_path", return_value=img):
+            server = srv.create_mcp_server()
+            asyncio.run(server.call_tool("model_guide", {"model_name": model}))
+            asyncio.run(server.call_tool("generate_image", {**args, "model": model}))
+            return mm.loaded_model.generate_image.call_args.kwargs
+
+    def test_canny_routes_to_control_image(self):
+        kw = self._run(
+            "flux.1-controlnet-canny-mlx",
+            _control_settings("flux.1-controlnet-canny-mlx", "flux1-controlnet", "canny", 3.5),
+            {"prompt": "oil painting", "control_image": "src.png",
+             "controlnet_conditioning_scale": 0.7})
+        assert kw.get("control_image") is not None
+        assert kw.get("controlnet_strength") == 0.7   # bridged to mflux's name
+        assert "image" not in kw
+
+    def test_depth_routes_to_image(self):
+        kw = self._run(
+            "flux.1-depth-dev-mlx",
+            _control_settings("flux.1-depth-dev-mlx", "flux1-depth", "dev", 10.0),
+            {"prompt": "cyberpunk", "control_image": "src.png", "strength": 0.3})
+        assert kw.get("image") is not None      # depth wants the source on `image`
+        assert kw.get("strength") == 0.3
+        assert "control_image" not in kw
+
+
+@MCP_SKIP
+class TestRecommendModel:
+    def test_controlnet_ranked(self, mock_model_manager):
+        with patch("ollamadiffuser.mcp.server.model_manager", mock_model_manager):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            content, _ = asyncio.run(server.call_tool("recommend_model", {"need": "controlnet"}))
+            text = content[0].text
+            assert "quality-ranked" in text
+            # A FLUX control model should appear for a controlnet need.
+            assert "controlnet" in text.lower() and "flux" in text.lower()
+
+    def test_img2img_ranked_by_quality(self, mock_model_manager):
+        with patch("ollamadiffuser.mcp.server.model_manager", mock_model_manager):
+            from ollamadiffuser.mcp.server import create_mcp_server
+
+            server = create_mcp_server()
+            content, _ = asyncio.run(server.call_tool("recommend_model", {"need": "img2img"}))
+            import re
+            quals = [int(m.group(1)) for m in
+                     re.finditer(r" q(\d+)/10 ", content[0].text)]
+            assert quals  # some models matched
+            # Quality is non-increasing down the ranked list.
+            assert quals == sorted(quals, reverse=True)

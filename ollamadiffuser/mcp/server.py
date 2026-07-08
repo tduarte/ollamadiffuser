@@ -5,6 +5,9 @@ import io
 import logging
 import os
 import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PIL import Image as PILImage
@@ -15,6 +18,22 @@ from ..core.config.model_registry import model_registry
 from ..core.config import model_guide as _model_guide
 
 logger = logging.getLogger(__name__)
+
+
+# Generated images are written here so the agent can (a) reuse an earlier result as an
+# input_image/control_image path, and (b) tell the user where the file is. `from_last`
+# still works for the immediate previous result without a path.
+_OUTPUT_DIR = Path(tempfile.gettempdir()) / "ollamadiffuser-outputs"
+
+
+def _save_output(image: "PILImage.Image", model: Optional[str]) -> str:
+    """Persist a generated image to the outputs dir; return its absolute path."""
+    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    slug = (model or "image").replace("/", "_").replace(" ", "_")
+    path = _OUTPUT_DIR / f"{slug}_{stamp}.png"
+    image.save(path, format="PNG")
+    return str(path)
 
 
 # Curated negative-prompt terms that suppress the most common AI anatomy errors
@@ -49,19 +68,17 @@ def _merge_negatives(negative_prompt: str, add_anatomy: bool) -> str:
 def _load_image_path(path: str, arg_name: str) -> "PILImage.Image":
     """Open a caller-supplied image path for img2img/control, with a helpful error.
 
-    generate_image returns its result inline (a base64 image block), never a file
-    on disk — so there is no output path to feed back in. Agents chaining a previous
-    result sometimes fabricate one here; steer them to from_last instead of letting
-    a bare FileNotFoundError surface.
+    Generated images ARE saved to disk (the path is in each generate_image response),
+    so a real saved path works here. But agents sometimes fabricate a path for the
+    previous result instead of using from_last — steer them, rather than letting a bare
+    FileNotFoundError surface.
     """
     if not os.path.isfile(path):
         raise ValueError(
-            f"{arg_name}={path!r} is not a readable file. Note: generate_image "
-            f"returns the image inline, not as a file path — there is no saved "
-            f"output to reference. To reuse the PREVIOUS generation, pass "
-            f"from_last='init' (img2img/edit) or from_last='control' (upscale) "
-            f"instead of a path. Use {arg_name} only for a real image file the "
-            f"user provided."
+            f"{arg_name}={path!r} is not a readable file. To reuse the PREVIOUS "
+            f"generation, use from_last='init' (img2img/edit) or from_last='control' "
+            f"(restyle/upscale), or pass the exact 'Saved to:' path from that "
+            f"response. Use {arg_name} only for a real image file on disk."
         )
     return PILImage.open(path).convert("RGB")
 
@@ -174,6 +191,9 @@ def create_mcp_server():
             "far you can tune them. CALL model_guide('<model>') BEFORE generating with a model — "
             "generate_image REFUSES models you have not consulted, and the first generation must "
             "use the recommended settings it gives.\n"
+            "  - recommend_model(need?): the models that can do what you need (img2img, "
+            "controlnet/restyle, upscale, edit, realism, ...) RANKED by quality — use it to pick "
+            "the best model for a task when several qualify.\n"
             "  - list_models / get_model_details(name): installed models, their type, base model, "
             "trigger words, description.\n"
             "  - list_loras(base_model?) or find_loras(query): installed LoRAs with base model and "
@@ -202,6 +222,20 @@ def create_mcp_server():
             "e.g. draft on SDXL then refine on Klein for quality; only go Klein->Pony when the "
             "GOAL is an anime restyle, not higher fidelity. Each pass is its own generate_image "
             "call and needs its model briefed via model_guide first.\n"
+            "CONTROLNET RESTYLE (change style, KEEP structure): to restyle a photo while holding "
+            "its composition, load a FLUX control model and pass the SOURCE image via "
+            "control_image (or from_last='control'), with the TARGET STYLE in the prompt. On MLX "
+            "the edge/depth map is extracted for you — pass a NORMAL photo, not a pre-made map. "
+            "WHICH MODEL: DEFAULT to DEPTH (flux.1-depth-dev-mlx) for most restyles — it keeps the "
+            "3D layout but lets style/materials/lighting change freely (photo->painting, "
+            "day->night, real->anime). Use CANNY (flux.1-controlnet-canny-mlx) only when exact "
+            "OUTLINES must survive — architecture, products, logos, text, line art — accepting a "
+            "less dramatic restyle. Call model_guide on the one you pick for the full recipe. Dial "
+            "tightness: canny via controlnet_conditioning_scale (higher = hug edges), depth via "
+            "`strength` (lower = less source bleed / more restyle). This is NOT img2img (which "
+            "drifts from the whole image) — ControlNet holds structure explicitly. Heads-up: canny "
+            "is only a ~3GB adapter and needs the FLUX.1-dev base (~20GB) installed; depth is a "
+            "self-contained model.\n"
             "REALISM & ORDER OF OPERATIONS: the PROMPT and NEGATIVE tags are the DOMINANT quality "
             "lever — LoRAs and guidance are secondary polish. For a realism-tuned Pony/SDXL "
             "checkpoint that still looks cartoonish, first fix the PROMPT (add photo/realistic "
@@ -290,13 +324,14 @@ def create_mcp_server():
         strength: float = 0.75,
         controlnet_conditioning_scale: float = 1.0,
         ctx: Context = None,
-    ) -> Image:
-        """Generate an image from a local diffusion model; returns the finished image.
+    ):
+        """Generate an image from a local diffusion model.
 
-        The result is returned INLINE as an image block, not written to disk — there
-        is no output file path. To feed a generated image into a later img2img/edit/
-        upscale pass, use from_last='init'/'control' (NOT input_image with an invented
-        path). input_image/control_image are only for a real image file on disk.
+        Returns the finished image inline AND a line with the path it was saved to. To
+        feed a generated image into a later img2img/edit/upscale pass, prefer
+        from_last='init'/'control' (chains the immediate previous result). You may also
+        pass the SAVED PATH from a prior response as input_image/control_image — do not
+        invent a path.
 
 
         Generation is slow. For a user-driven run, only call this AFTER you have
@@ -347,15 +382,19 @@ def create_mcp_server():
                 or for an edit model (kontext / qwen-image-edit — put the change as
                 an instruction in `prompt`). Only for models whose model_guide
                 image_ops include img2img or edit.
-            control_image: Path to a control/source image for the ControlNet upscaler
-                or canny/depth models (e.g. control_image=<low-res> for upscaling,
-                with a larger width/height). Only for models with an upscale/control op.
+            control_image: Path to the SOURCE image for a ControlNet/upscaler model —
+                canny (edge-locked restyle), depth (layout-locked restyle), or the
+                upscaler (low-res source). Pass a NORMAL photo; the edge/depth map is
+                extracted for you on MLX. Only for models with an upscale/canny/depth op.
+                Put the TARGET STYLE in `prompt`.
             from_last: Reuse the previous generation instead of a path — "init" feeds
                 it as `input_image` (img2img/edit), "control" as `control_image`
-                (upscale). Great for draft -> refine -> upscale chains.
-            strength: img2img denoise strength (only used with an init image). Low
-                (~0.2-0.4) refines/keeps composition; high (~0.5-0.7) restyles.
-            controlnet_conditioning_scale: Strength of a control_image's influence.
+                (restyle/upscale). Great for draft -> refine -> restyle/upscale chains.
+            strength: img2img denoise strength with an init image (low ~0.2-0.4 refines,
+                high ~0.5-0.7 restyles). Also the depth-control blend: lower = less source
+                bleed / more restyle freedom.
+            controlnet_conditioning_scale: How tightly a canny/upscaler control_image is
+                held (~0.5-0.9; lower = looser structure, more style freedom).
         """
         negative_prompt = _merge_negatives(negative_prompt, avoid_anatomy_errors)
         # Decide whether we must (re)load. get_current_model() returns the
@@ -403,19 +442,25 @@ def create_mcp_server():
             # Resolve image inputs (from_last chains the previous result; paths are loaded).
             if from_last is not None and from_last not in ("init", "control"):
                 raise ValueError("from_last must be 'init' or 'control'.")
-            if from_last and not _last_image.get("image"):
-                raise ValueError(
-                    "from_last was set but there is no previous image to chain. "
-                    "Generate one first, or pass input_image/control_image as a path."
-                )
+            if from_last:
+                last = _last_image.get("image")
+                # Fall back to the on-disk copy if the in-memory result was dropped.
+                if last is None and _last_image.get("path") and os.path.isfile(_last_image["path"]):
+                    last = PILImage.open(_last_image["path"]).convert("RGB")
+                if last is None:
+                    raise ValueError(
+                        "from_last was set but there is no previous image to chain. "
+                        "Generate one first, or pass input_image/control_image as a path "
+                        "(the saved path is in the previous generate_image response)."
+                    )
             if input_image:
                 init_img = _load_image_path(input_image, "input_image")
             elif from_last == "init":
-                init_img = _last_image.get("image")
+                init_img = last
             if control_image:
                 ctrl_img = _load_image_path(control_image, "control_image")
             elif from_last == "control":
-                ctrl_img = _last_image.get("image")
+                ctrl_img = last
 
             # Validate the requested op against the model's capabilities.
             _ops = _model_guide.image_ops(want, _mt, _params)
@@ -527,21 +572,41 @@ def create_mcp_server():
             gen_kwargs["image"] = init_img
             gen_kwargs["strength"] = strength
         if ctrl_img is not None:
-            gen_kwargs["control_image"] = ctrl_img
-            gen_kwargs["controlnet_conditioning_scale"] = controlnet_conditioning_scale
+            # Route the control source per the model's control_spec: FLUX depth wants it on
+            # `image` (mflux computes depth), canny/upscaler on `control_image` with the
+            # strength under mflux's `controlnet_strength`. Falls back to plain control_image
+            # for SD ControlNets (unchanged).
+            spec = _model_guide.control_spec(want, _mt, _params) if want else None
+            if spec:
+                gen_kwargs[spec["source_kwarg"]] = ctrl_img
+                if spec["strength_kwarg"]:
+                    gen_kwargs[spec["strength_kwarg"]] = controlnet_conditioning_scale
+                # Depth routes the source to `image` — expose `strength` as its blend
+                # (lower = less source bleed / more restyle freedom).
+                if spec["source_kwarg"] == "image":
+                    gen_kwargs["strength"] = strength
+            else:
+                gen_kwargs["control_image"] = ctrl_img
+                gen_kwargs["controlnet_conditioning_scale"] = controlnet_conditioning_scale
 
         result = await asyncio.to_thread(engine.generate_image, **gen_kwargs)
 
         # First generation for this model succeeded — subsequent calls may tune freely.
         if want:
             _generated.add(want)
-        # Remember the result so a later pass can chain it (from_last=).
+        # Persist to disk so this result can be reused by path, and remember it for from_last=.
+        saved_path = await asyncio.to_thread(_save_output, result, want)
         _last_image["image"] = result
         _last_image["model"] = want
+        _last_image["path"] = saved_path
 
         buf = io.BytesIO()
         result.save(buf, format="PNG")
-        return Image(data=buf.getvalue(), format="png")
+        note = (f"Saved to: {saved_path}\n"
+                f"Reuse it as a next pass with from_last='init' (img2img/edit) or "
+                f"from_last='control' (restyle/upscale), or pass this path as "
+                f"input_image/control_image.")
+        return [Image(data=buf.getvalue(), format="png"), note]
 
     @mcp_server.tool()
     async def model_guide(model_name: Optional[str] = None) -> str:
@@ -580,6 +645,57 @@ def create_mcp_server():
         for name in names:
             mt, params = _model_type_and_params(name)
             lines.append(_model_guide.catalog_line(name, mt, params))
+        return "\n".join(lines)
+
+    @mcp_server.tool()
+    async def recommend_model(need: Optional[str] = None) -> str:
+        """Rank models by quality for a given capability — pick the BEST one for the job.
+
+        Capability comes first (a model must be able to do what you need), then the quality
+        score breaks ties between models that can. Installed models are ranked ahead of
+        not-yet-installed ones at equal quality.
+
+        Args:
+            need: What you need the model to do. One of: 'txt2img', 'img2img', 'edit',
+                'upscale', 'controlnet' (or 'canny'/'depth'/'restyle'), 'realism', or free
+                text. Omit to see the overall quality board across all models.
+        """
+        q = (need or "").lower().strip()
+
+        def matches(ops, realism, good_for, family):
+            if not q:
+                return True
+            if q in ("img2img", "txt2img", "edit", "upscale", "canny", "depth"):
+                return q in ops
+            if q in ("controlnet", "control", "restyle", "style", "structure"):
+                return any(o in ops for o in ("canny", "depth", "control"))
+            if q in ("realism", "photoreal", "photorealistic", "photo", "realistic"):
+                return realism
+            return q in good_for.lower() or q in family
+
+        installed = set(settings.models.keys())
+        available = set(model_registry.get_available_models().keys())
+        rows = []
+        for name in installed | available:
+            mt, params = _model_type_and_params(name)
+            g = _model_guide.guide_for(name, mt, params)
+            realism = bool(g.get("realism")) or _model_guide.is_realism(name, params)
+            if not matches(g["image_ops"], realism, g["good_for"], g["family"]):
+                continue
+            rows.append((g["quality"], name in installed, name, g))
+        if not rows:
+            return (f"No models match '{need}'. Try 'img2img', 'controlnet', 'upscale', "
+                    "'edit', or 'realism', or call model_guide() to browse everything.")
+        # Highest quality first; installed ahead of not-installed at equal quality.
+        rows.sort(key=lambda r: (-r[0], not r[1], r[2]))
+        header = f"Best models for '{need}' (quality-ranked):" if need else \
+            "Models by quality (highest first):"
+        lines = [header]
+        for i, (quality, is_inst, name, g) in enumerate(rows[:20], 1):
+            tag = "installed" if is_inst else "not installed — pull via CLI"
+            lines.append(f"  {i}. {name} [{g['family']}] q{quality}/10 "
+                         f"({'/'.join(g['image_ops'])}; {tag}) — {g['good_for']}")
+        lines.append("\nThen call model_guide('<name>') before generating with your pick.")
         return "\n".join(lines)
 
     @mcp_server.tool()
