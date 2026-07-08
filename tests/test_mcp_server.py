@@ -208,6 +208,31 @@ class TestLoadModelTool:
             text = content[0].text
             assert "loaded successfully" in text
 
+    def test_load_emits_heartbeat(self):
+        # A slow load should ping report_progress with a "Loading …" message.
+        import time
+        import ollamadiffuser.mcp.server as srv
+
+        mm = MagicMock()
+
+        def slow(_name):
+            time.sleep(0.25)
+            return True
+
+        mm.load_model.side_effect = slow
+        msgs = []
+
+        async def rp(**kw):
+            msgs.append(kw.get("message"))
+
+        ctx = MagicMock()
+        ctx.report_progress = rp
+        with patch.object(srv, "model_manager", mm), \
+                patch.object(srv, "_LOAD_HEARTBEAT_SEC", 0.05):
+            ok = asyncio.run(srv._load_with_heartbeat("bigmodel", ctx))
+        assert ok is True
+        assert any("Loading bigmodel" in (m or "") for m in msgs)
+
 
 @MCP_SKIP
 class TestGenerateImageTool:

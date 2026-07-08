@@ -192,6 +192,33 @@ def _compat_note(lora_base_model: Optional[str], loaded_arch: Optional[str]) -> 
         f"  ✗ needs {la} (loaded: {loaded_arch})"
 
 
+# Seconds between "Loading …" keepalive pings during a model load.
+_LOAD_HEARTBEAT_SEC = 3
+
+
+async def _load_with_heartbeat(model_name: str, ctx=None) -> bool:
+    """Load a model, emitting a keepalive progress ping every few seconds while it loads.
+
+    Loading a multi-GB model is slow and silent; the heartbeat keeps the client's request
+    timeout resetting (and shows the user "Loading …") until it finishes. Returns whether
+    the load succeeded. ctx may be None (no client progress channel).
+    """
+    load_fut = asyncio.ensure_future(asyncio.to_thread(model_manager.load_model, model_name))
+    elapsed = 0
+    while True:
+        done, _ = await asyncio.wait({load_fut}, timeout=_LOAD_HEARTBEAT_SEC)
+        if load_fut in done:
+            break
+        elapsed += _LOAD_HEARTBEAT_SEC
+        if ctx is not None:
+            try:
+                await ctx.report_progress(
+                    progress=elapsed, total=None, message=f"Loading {model_name}… {elapsed}s")
+            except Exception:
+                pass
+    return load_fut.result()
+
+
 def _ensure_mcp():
     """Check that the mcp package is available."""
     try:
@@ -556,25 +583,7 @@ def create_mcp_server():
                     f"Install it first: ollamadiffuser pull {want}"
                 )
             logger.info(f"Loading model: {want}")
-            # Loading a multi-GB model is slow and silent. Emit a keepalive heartbeat so
-            # the client's request timeout keeps resetting (and the user sees progress)
-            # until the denoise loop takes over.
-            load_fut = asyncio.ensure_future(
-                asyncio.to_thread(model_manager.load_model, want))
-            elapsed = 0
-            while True:
-                done, _ = await asyncio.wait({load_fut}, timeout=3)
-                if load_fut in done:
-                    break
-                elapsed += 3
-                if ctx is not None:
-                    try:
-                        await ctx.report_progress(
-                            progress=elapsed, total=None,
-                            message=f"Loading {want}… {elapsed}s")
-                    except Exception:
-                        pass
-            success = load_fut.result()
+            success = await _load_with_heartbeat(want, ctx)
             if not success:
                 raise RuntimeError(f"Failed to load model '{want}'")
 
@@ -806,7 +815,7 @@ def create_mcp_server():
         return "\n".join(lines)
 
     @mcp_server.tool()
-    async def load_model(model_name: str) -> str:
+    async def load_model(model_name: str, ctx: Context = None) -> str:
         """Load a specific image generation model into memory.
 
         Args:
@@ -820,7 +829,8 @@ def create_mcp_server():
                 f"Use 'ollamadiffuser pull {model_name}' to install it first."
             )
 
-        success = await asyncio.to_thread(model_manager.load_model, model_name)
+        # Heartbeat while loading so the client doesn't time out on a silent multi-GB load.
+        success = await _load_with_heartbeat(model_name, ctx)
         if success:
             return f"Model '{model_name}' loaded successfully"
         return f"Failed to load model '{model_name}'"
