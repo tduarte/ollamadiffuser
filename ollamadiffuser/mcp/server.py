@@ -1,9 +1,11 @@
 """OllamaDiffuser MCP Server - Model Context Protocol integration."""
 
 import asyncio
+import base64
 import io
 import logging
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime
@@ -65,22 +67,52 @@ def _merge_negatives(negative_prompt: str, add_anatomy: bool) -> str:
     return _append_negatives(negative_prompt, _ANATOMY_NEGATIVE)
 
 
-def _load_image_path(path: str, arg_name: str) -> "PILImage.Image":
-    """Open a caller-supplied image path for img2img/control, with a helpful error.
+def _load_image_path(ref: str, arg_name: str) -> "PILImage.Image":
+    """Load a caller-supplied image for img2img/control from any convenient form:
+    a local file path, an http(s) URL, a data: URI, or raw base64 bytes.
 
-    Generated images ARE saved to disk (the path is in each generate_image response),
-    so a real saved path works here. But agents sometimes fabricate a path for the
-    previous result instead of using from_last — steer them, rather than letting a bare
-    FileNotFoundError surface.
+    This lets a client hand over a user-provided image directly (URL or base64) without
+    first writing it to disk. Generated images are also saved to disk (their path is in
+    each generate_image response). Agents that fabricate a path for the previous result
+    are steered to from_last instead of hitting a bare error.
     """
-    if not os.path.isfile(path):
-        raise ValueError(
-            f"{arg_name}={path!r} is not a readable file. To reuse the PREVIOUS "
-            f"generation, use from_last='init' (img2img/edit) or from_last='control' "
-            f"(restyle/upscale), or pass the exact 'Saved to:' path from that "
-            f"response. Use {arg_name} only for a real image file on disk."
-        )
-    return PILImage.open(path).convert("RGB")
+    ref = (ref or "").strip()
+
+    # data: URI (base64-encoded image)
+    if ref.startswith("data:"):
+        try:
+            b64 = ref.split(",", 1)[1]
+            return PILImage.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+        except Exception as e:
+            raise ValueError(f"{arg_name}: could not decode data: URI ({e}).")
+
+    # http(s) URL — download it
+    if ref.startswith(("http://", "https://")):
+        try:
+            import requests
+            resp = requests.get(ref, timeout=30)
+            resp.raise_for_status()
+            return PILImage.open(io.BytesIO(resp.content)).convert("RGB")
+        except Exception as e:
+            raise ValueError(f"{arg_name}: could not fetch image from URL ({e}).")
+
+    # Local file path
+    if os.path.isfile(ref):
+        return PILImage.open(ref).convert("RGB")
+
+    # Raw base64 fallback (long, scheme-less, not a file)
+    if len(ref) > 100 and re.fullmatch(r"[A-Za-z0-9+/=\s]+", ref or ""):
+        try:
+            return PILImage.open(io.BytesIO(base64.b64decode(ref))).convert("RGB")
+        except Exception:
+            pass
+
+    raise ValueError(
+        f"{arg_name}={ref[:60]!r}… is not a readable image. Accepted: a local file "
+        f"path, an http(s) URL, a data: URI, or base64 bytes. To reuse the PREVIOUS "
+        f"generation, use from_last='init' (img2img/edit) or from_last='control' "
+        f"(restyle/upscale) instead of inventing a path."
+    )
 
 
 def _model_trigger_words(model_name: Optional[str]):
@@ -332,9 +364,10 @@ def create_mcp_server():
 
         Returns the finished image inline AND a line with the path it was saved to. To
         feed a generated image into a later img2img/edit/upscale pass, prefer
-        from_last='init'/'control' (chains the immediate previous result). You may also
-        pass the SAVED PATH from a prior response as input_image/control_image — do not
-        invent a path.
+        from_last='init'/'control' (chains the immediate previous result), or pass the
+        SAVED PATH from a prior response. For a USER-PROVIDED image, input_image /
+        control_image accept a local path, an http(s) URL, a data: URI, or base64 bytes
+        directly — so you don't need to save it first. Don't invent a path.
 
 
         Generation is slow. For a user-driven run, only call this AFTER you have
@@ -384,21 +417,23 @@ def create_mcp_server():
                 when the checkpoint is realism-oriented AND uses negatives; True/False
                 forces it. No effect on models that ignore negatives (FLUX/Klein/turbo)
                 — steer those toward realism with positive phrasing instead.
-            input_image: Path to an init/source image for img2img (refine/restyle)
-                or for an edit model (kontext / qwen-image-edit — put the change as
-                an instruction in `prompt`). Only for models whose model_guide
-                image_ops include img2img or edit.
-            control_image: Path to the SOURCE image for a ControlNet/upscaler model —
-                canny (edge-locked restyle), depth (layout-locked restyle), or the
-                upscaler (low-res source). Pass a NORMAL photo; the edge/depth map is
-                extracted for you on MLX. Only for models with an upscale/canny/depth op.
-                Put the TARGET STYLE in `prompt`.
+            input_image: The init/source image for img2img (refine/restyle) or an edit
+                model (kontext / qwen-image-edit — put the change as an instruction in
+                `prompt`). Accepts a local file path, an http(s) URL, a data: URI, or
+                base64 bytes — so a user-provided image works directly. Only for models
+                whose model_guide image_ops include img2img or edit.
+            control_image: The SOURCE image for a ControlNet/upscaler model — canny
+                (edge-locked restyle), depth (layout-locked restyle), or the upscaler
+                (low-res source). Same accepted forms as input_image (path/URL/data
+                URI/base64). Pass a NORMAL photo; the edge/depth map is extracted for you
+                on MLX. Only for models with an upscale/canny/depth op. TARGET STYLE goes
+                in `prompt`.
             from_last: Reuse the previous generation instead of a path — "init" feeds
                 it as `input_image` (img2img/edit), "control" as `control_image`
                 (restyle/upscale). Great for draft -> refine -> restyle/upscale chains.
             strength: img2img denoise strength with an init image (low ~0.2-0.4 refines,
-                high ~0.5-0.7 restyles). Also the depth-control blend: lower = less source
-                bleed / more restyle freedom.
+                high ~0.5-0.7 restyles). Ignored by the depth model (which generates
+                fresh from the depth map).
             controlnet_conditioning_scale: How tightly a canny/upscaler control_image is
                 held (~0.5-0.9; lower = looser structure, more style freedom).
         """
@@ -521,7 +556,25 @@ def create_mcp_server():
                     f"Install it first: ollamadiffuser pull {want}"
                 )
             logger.info(f"Loading model: {want}")
-            success = await asyncio.to_thread(model_manager.load_model, want)
+            # Loading a multi-GB model is slow and silent. Emit a keepalive heartbeat so
+            # the client's request timeout keeps resetting (and the user sees progress)
+            # until the denoise loop takes over.
+            load_fut = asyncio.ensure_future(
+                asyncio.to_thread(model_manager.load_model, want))
+            elapsed = 0
+            while True:
+                done, _ = await asyncio.wait({load_fut}, timeout=3)
+                if load_fut in done:
+                    break
+                elapsed += 3
+                if ctx is not None:
+                    try:
+                        await ctx.report_progress(
+                            progress=elapsed, total=None,
+                            message=f"Loading {want}… {elapsed}s")
+                    except Exception:
+                        pass
+            success = load_fut.result()
             if not success:
                 raise RuntimeError(f"Failed to load model '{want}'")
 

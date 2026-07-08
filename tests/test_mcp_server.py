@@ -35,6 +35,29 @@ def mock_model_manager():
 
 
 @MCP_SKIP
+class TestImageLoading:
+    def test_accepts_data_uri_path_and_errors(self, tmp_path):
+        import base64
+        import io as _io
+        from ollamadiffuser.mcp.server import _load_image_path
+
+        buf = _io.BytesIO()
+        PILImage.new("RGB", (8, 8), "red").save(buf, format="PNG")
+        raw = base64.b64encode(buf.getvalue()).decode()
+
+        # data: URI
+        img = _load_image_path("data:image/png;base64," + raw, "input_image")
+        assert img.size == (8, 8)
+        # local file path
+        p = tmp_path / "x.png"
+        PILImage.new("RGB", (8, 8), "blue").save(p)
+        assert _load_image_path(str(p), "control_image").size == (8, 8)
+        # bad reference -> helpful error mentioning the accepted forms
+        with pytest.raises(ValueError, match="local file path.*URL.*data"):
+            _load_image_path("/nope/invented.png", "input_image")
+
+
+@MCP_SKIP
 class TestAnatomyNegatives:
     def test_merge_adds_and_dedupes(self):
         from ollamadiffuser.mcp.server import _merge_negatives, _ANATOMY_NEGATIVE
